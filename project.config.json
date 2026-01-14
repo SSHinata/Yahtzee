@@ -1,25 +1,51 @@
 {
+  "miniprogramRoot": "minigame/",
+  "projectname": "Yahtzee",
+  "description": "Yahtzee Game",
+  "appid": "wxa7c91dae6c5c13cc",
   "setting": {
+    "urlCheck": true,
     "es6": true,
-    "postcss": true,
-    "minified": true,
-    "uglifyFileName": false,
     "enhance": true,
-    "packNpmRelationList": [],
+    "postcss": true,
+    "preloadBackgroundData": false,
+    "minified": true,
+    "newFeature": true,
+    "coverView": true,
+    "nodeModules": true,
+    "autoAudits": false,
+    "showShadowRootInWxmlPanel": true,
+    "scopeDataCheck": false,
+    "uglifyFileName": false,
+    "checkInvalidKey": true,
+    "checkSiteMap": true,
+    "uploadWithSourceMap": true,
+    "compileHotReLoad": false,
+    "lazyloadPlaceholderEnable": false,
+    "useMultiFrameRuntime": true,
+    "useApiHook": true,
+    "useApiHostProcess": true,
     "babelSetting": {
       "ignore": [],
       "disablePlugins": [],
       "outputPath": ""
     },
-    "useCompilerPlugins": false
+    "enableEngineNative": false,
+    "useIsolateContext": true,
+    "userConfirmedBundleSwitch": false,
+    "packNpmManually": false,
+    "packNpmRelationList": [],
+    "minifyWXSS": true
   },
   "compileType": "game",
-  "simulatorPluginLibVersion": {},
+  "libVersion": "2.19.4",
+  "srcMiniprogramRoot": "minigame/",
   "packOptions": {
     "ignore": [],
     "include": []
   },
-  "isGameTourist": false,
-  "appid": "wxa7c91dae6c5c13cc",
-  "editorSetting": {}
+  "editorSetting": {
+    "tabIndent": "insertSpaces",
+    "tabSize": 2
+  }
 }
