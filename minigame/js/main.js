@@ -37,7 +37,8 @@ export default class Main {
       this.logicHeight = windowHeight;
 
       // 初始化游戏核心状态
-      this.state = createNewGame([{id: 'p1', name: '玩家 1'}, {id: 'p2', name: '玩家 2'}]);
+      this.players = [{ id: 'p1', name: '玩家 1' }, { id: 'p2', name: '玩家 2' }];
+      this.state = createNewGame(this.players);
       
       // 自动开始第一回合
       if (this.state.phase === Phase.INIT) {
@@ -112,6 +113,13 @@ export default class Main {
            this.state = endTurnAndAdvance(this.state);
          }, 1000);
       }
+    }
+  }
+
+  handleRestart() {
+    this.state = createNewGame(this.players);
+    if (this.state.phase === Phase.INIT) {
+      this.state = startTurn(this.state);
     }
   }
 }

@@ -31,6 +31,11 @@ export default class InputHandler {
       this.main.handleStopRolling();
       return;
     }
+
+    if (regions.btnRestart && this.isHit(x, y, regions.btnRestart)) {
+      this.main.handleRestart();
+      return;
+    }
     
     // 3. 检查计分格点击
     for (const r of regions.scoreCells) {
