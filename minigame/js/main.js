@@ -1,5 +1,5 @@
 import { createNewGame, startTurn, actionRoll, actionToggleHold, actionStopRolling, actionApplyScore, endTurnAndAdvance } from '../core/engine/gameEngine';
-import { Phase, ScoreKey } from '../core/engine/rules';
+import { Phase } from '../core/engine/rules';
 import Renderer from './render';
 import InputHandler from './input';
 
@@ -39,11 +39,9 @@ export default class Main {
       // 初始化游戏核心状态
       this.players = [{ id: 'p1', name: '玩家 1' }, { id: 'p2', name: '玩家 2' }];
       this.state = createNewGame(this.players);
-      
-      // 自动开始第一回合
-      if (this.state.phase === Phase.INIT) {
-        this.state = startTurn(this.state);
-      }
+
+      this.screen = 'menu';
+      this.pressedKey = null;
 
       // 初始化渲染器
       this.renderer = new Renderer(this.ctx, this.logicWidth, this.logicHeight, safeAreaTop);
@@ -84,11 +82,36 @@ export default class Main {
 
     // 绘制当前状态
     if (this.renderer) {
-      this.renderer.render(this.state);
+      this.renderer.setPressed(this.pressedKey);
+      this.renderer.render(this.screen, this.state);
     }
   }
   
   // --- 暴露给 InputHandler 的动作接口 ---
+
+  goMenu() {
+    this.screen = 'menu';
+  }
+
+  goRules() {
+    this.screen = 'rules';
+  }
+
+  startGame() {
+    this.state = createNewGame(this.players);
+    if (this.state.phase === Phase.INIT) {
+      this.state = startTurn(this.state);
+    }
+    this.screen = 'game';
+  }
+
+  setPressedKey(key) {
+    this.pressedKey = key;
+  }
+
+  clearPressedKey() {
+    this.pressedKey = null;
+  }
   
   handleRoll() {
     this.state = actionRoll(this.state);

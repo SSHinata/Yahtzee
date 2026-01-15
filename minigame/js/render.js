@@ -34,19 +34,42 @@ export default class Renderer {
     this.ctx = ctx;
     this.width = logicWidth;
     this.height = logicHeight;
+
+    this.COLORS = {
+      bg: '#F6F7F9',
+      card: '#FFFFFF',
+      border: '#E6E8EC',
+      text: '#1F2937',
+      textSub: '#6B7280',
+      primary: '#007bff',
+      primaryPressed: '#0062cc',
+      success: '#28a745',
+      successPressed: '#218838',
+      grayBtn: '#6c757d',
+      grayBtnPressed: '#5a6268',
+      diceStroke: '#111827',
+      heldFill: '#FFE8E8',
+      heldStroke: '#FF6B6B',
+      heldMark: '#FF6B6B'
+    };
     
     // 简单的布局常量
     const safeTop = safeAreaTop || 20;
+    const topBarH = 48;
+    this.safeTop = safeTop;
+    this.topBarH = topBarH;
     this.LAYOUT = {
-      HEADER_Y: safeTop + 20,
-      DICE_Y: safeTop + 80,
+      HEADER_Y: safeTop + topBarH + 16,
+      DICE_Y: safeTop + topBarH + 72,
       DICE_SIZE: 50,
       DICE_GAP: 10,
-      BTN_Y: safeTop + 160,
+      BTN_Y: safeTop + topBarH + 152,
       BTN_W: 120,
       BTN_H: 40,
-      SCORE_START_Y: safeTop + 230,
-      SCORE_LINE_H: 30
+      SCORE_START_Y: safeTop + topBarH + 224,
+      SCORE_LINE_H: 36,
+      TOP_BTN_H: 28,
+      TOP_BTN_W: 120
     };
     
     // 用于点击检测的区域缓存
@@ -55,36 +78,260 @@ export default class Renderer {
       btnRoll: null, // {x, y, w, h}
       btnStop: null, // {x, y, w, h}
       scoreCells: [], // {x, y, w, h, key}
-      btnRestart: null // {x, y, w, h}
+      btnRestart: null, // {x, y, w, h}
+      btnBackToMenu: null, // {x, y, w, h}
+      btnStartGame: null, // {x, y, w, h}
+      btnRules: null // {x, y, w, h}
     };
+    this.pressed = null;
   }
 
-  render(state) {
-    const ctx = this.ctx;
-    const L = this.LAYOUT;
+  render(screen, state) {
+    if (screen === 'menu') {
+      this.renderMenu();
+      return;
+    }
+    if (screen === 'rules') {
+      this.renderRules();
+      return;
+    }
+    this.renderGame(state);
+  }
 
-    // 1. 绘制背景
-    // 注意：这里使用 this.width 而不是 ctx.canvas.width，确保逻辑尺寸正确
-    ctx.fillStyle = '#f0f0f0';
+  resetHitRegions() {
+    this.hitRegions.dice = [];
+    this.hitRegions.btnRoll = null;
+    this.hitRegions.btnStop = null;
+    this.hitRegions.scoreCells = [];
+    this.hitRegions.btnRestart = null;
+    this.hitRegions.btnBackToMenu = null;
+    this.hitRegions.btnStartGame = null;
+    this.hitRegions.btnRules = null;
+  }
+
+  setPressed(key) {
+    this.pressed = key;
+  }
+
+  clearPressed() {
+    this.pressed = null;
+  }
+
+  drawWrappedText(text, x, y, maxWidth, lineHeight) {
+    const ctx = this.ctx;
+    let line = '';
+    let currentY = y;
+    for (const ch of text) {
+      const testLine = line + ch;
+      if (line && ctx.measureText(testLine).width > maxWidth) {
+        ctx.fillText(line, x, currentY);
+        currentY += lineHeight;
+        line = ch;
+      } else {
+        line = testLine;
+      }
+    }
+    if (line) {
+      ctx.fillText(line, x, currentY);
+      currentY += lineHeight;
+    }
+    return currentY;
+  }
+
+  drawCenteredSegments(segments, y) {
+    const ctx = this.ctx;
+    const prevAlign = ctx.textAlign;
+    const prevBaseline = ctx.textBaseline;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    const width = segments.reduce((sum, s) => sum + ctx.measureText(s.text).width, 0);
+    let x = (this.width - width) / 2;
+    for (const s of segments) {
+      ctx.fillStyle = s.color;
+      ctx.fillText(s.text, x, y);
+      x += ctx.measureText(s.text).width;
+    }
+    ctx.textAlign = prevAlign;
+    ctx.textBaseline = prevBaseline;
+  }
+
+  renderMenu() {
+    const ctx = this.ctx;
+    const C = this.COLORS;
+    this.resetHitRegions();
+
+    ctx.fillStyle = C.bg;
     ctx.fillRect(0, 0, this.width, this.height);
 
-    // 2. 绘制顶部信息 (当前玩家、轮次)
-    ctx.fillStyle = '#333';
+    ctx.fillStyle = C.text;
+    ctx.font = '28px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('骰来骰去', this.width / 2, this.safeTop + 64);
+    ctx.fillStyle = C.textSub;
+    ctx.font = '16px sans-serif';
+    ctx.fillText('掷骰计分对战', this.width / 2, this.safeTop + 96);
+
+    const btnW = 200;
+    const btnH = 52;
+    const gap = 18;
+    const startY = this.safeTop + 132;
+    const x = (this.width - btnW) / 2;
+    const startInset = this.pressed === 'btnStartGame' ? 1 : 0;
+
+    ctx.fillStyle = this.pressed === 'btnStartGame' ? C.primaryPressed : C.primary;
+    ctx.fillRect(x + startInset, startY + startInset, btnW - startInset * 2, btnH - startInset * 2);
+    ctx.fillStyle = '#fff';
     ctx.font = '20px sans-serif';
+    ctx.fillText('开始游戏', x + btnW / 2, startY + btnH / 2);
+    this.hitRegions.btnStartGame = { x, y: startY, w: btnW, h: btnH };
+
+    const rulesY = startY + btnH + gap;
+    const rulesInset = this.pressed === 'btnRules' ? 1 : 0;
+    if (this.pressed === 'btnRules') {
+      ctx.fillStyle = '#E9F7EF';
+      ctx.fillRect(x + rulesInset, rulesY + rulesInset, btnW - rulesInset * 2, btnH - rulesInset * 2);
+      ctx.strokeStyle = C.success;
+      ctx.strokeRect(x + rulesInset, rulesY + rulesInset, btnW - rulesInset * 2, btnH - rulesInset * 2);
+      ctx.fillStyle = C.success;
+    } else {
+      ctx.fillStyle = C.card;
+      ctx.fillRect(x, rulesY, btnW, btnH);
+      ctx.strokeStyle = C.success;
+      ctx.strokeRect(x, rulesY, btnW, btnH);
+      ctx.fillStyle = C.success;
+    }
+    ctx.font = '20px sans-serif';
+    ctx.fillText('游戏规则', x + btnW / 2, rulesY + btnH / 2);
+    this.hitRegions.btnRules = { x, y: rulesY, w: btnW, h: btnH };
+  }
+
+  renderRules() {
+    const ctx = this.ctx;
+    const C = this.COLORS;
+    this.resetHitRegions();
+
+    ctx.fillStyle = C.bg;
+    ctx.fillRect(0, 0, this.width, this.height);
+
+    const backW = this.LAYOUT.TOP_BTN_W;
+    const backH = this.LAYOUT.TOP_BTN_H;
+    const backX = 20;
+    const backY = this.safeTop + 10;
+    const backInset = this.pressed === 'btnBackToMenu' ? 1 : 0;
+    ctx.fillStyle = this.pressed === 'btnBackToMenu' ? C.grayBtnPressed : C.grayBtn;
+    ctx.fillRect(backX + backInset, backY + backInset, backW - backInset * 2, backH - backInset * 2);
+    ctx.fillStyle = '#fff';
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('返回主界面', backX + backW / 2, backY + backH / 2);
+    this.hitRegions.btnBackToMenu = { x: backX, y: backY, w: backW, h: backH };
+
+    ctx.fillStyle = C.text;
+    ctx.font = '22px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('游戏规则', this.width / 2, backY + backH + 16);
+
+    ctx.fillStyle = C.text;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+
+    const contentX = 20;
+    const maxWidth = this.width - 40;
+    const lineHeight = 20;
+    let y = backY + backH + 60;
+
+    ctx.font = '16px sans-serif';
+    ctx.fillStyle = C.text;
+    y = this.drawWrappedText('玩法流程', contentX, y, maxWidth, lineHeight);
+    y += 6;
+
+    ctx.font = '14px sans-serif';
+    ctx.fillStyle = C.textSub;
+    const flow = [
+      '• 每回合最多掷骰 3 次。',
+      '• 点击骰子可保留/取消保留。',
+      '• 掷过至少一次后，点击“选择计分”进入计分阶段。',
+      '• 计分阶段选择一个未使用的类别完成本回合。'
+    ];
+    for (const p of flow) {
+      y = this.drawWrappedText(p, contentX, y, maxWidth, lineHeight);
+      y += 4;
+    }
+
+    y += 10;
+    ctx.font = '16px sans-serif';
+    ctx.fillStyle = C.text;
+    y = this.drawWrappedText('计分方式', contentX, y, maxWidth, lineHeight);
+    y += 6;
+
+    ctx.font = '13px sans-serif';
+    ctx.fillStyle = C.textSub;
+    const scoring = [
+      '• 一点/两点/三点/四点/五点/六点：对应点数之和。',
+      '• 三条：任意 3 个相同，得分为 5 个骰子总和，否则 0。',
+      '• 四条：任意 4 个相同，得分为 5 个骰子总和，否则 0。',
+      '• 葫芦：3+2 组合，固定 25 分，否则 0。',
+      '• 小顺：任意 4 连（如 1-2-3-4），固定 30 分，否则 0。',
+      '• 大顺：5 连（1-2-3-4-5 或 2-3-4-5-6），固定 40 分，否则 0。',
+      '• 快艇：5 个相同，固定 50 分，否则 0。',
+      '• 全选：5 个骰子总和。',
+      '• 上层奖励：一点~六点合计 ≥ 63，额外 +35 分。',
+      '• 额外快艇：若已成功计过一次快艇（50 分），之后再掷出快艇可额外 +100 分（本项目不启用 Joker 万能牌规则）。'
+    ];
+    for (const p of scoring) {
+      y = this.drawWrappedText(p, contentX, y, maxWidth, lineHeight);
+      y += 4;
+    }
+  }
+
+  renderGame(state) {
+    const ctx = this.ctx;
+    const L = this.LAYOUT;
+    const C = this.COLORS;
+    this.resetHitRegions();
+
+    ctx.fillStyle = C.bg;
+    ctx.fillRect(0, 0, this.width, this.height);
+
+    const backW = L.TOP_BTN_W;
+    const backH = L.TOP_BTN_H;
+    const backX = 20;
+    const backY = this.safeTop + 10;
+    const backInset = this.pressed === 'btnBackToMenu' ? 1 : 0;
+    ctx.fillStyle = this.pressed === 'btnBackToMenu' ? C.grayBtnPressed : C.grayBtn;
+    ctx.fillRect(backX + backInset, backY + backInset, backW - backInset * 2, backH - backInset * 2);
+    ctx.fillStyle = '#fff';
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('返回主界面', backX + backW / 2, backY + backH / 2);
+    this.hitRegions.btnBackToMenu = { x: backX, y: backY, w: backW, h: backH };
+
+    ctx.fillStyle = C.text;
+    ctx.font = '18px sans-serif';
     ctx.textAlign = 'center';
     const player = state.players[state.currentPlayerIndex];
-    // 使用中文 Player 1 -> 玩家 1
     const playerName = player.name.replace('Player', '玩家');
-    const infoText = `第 ${state.round} 轮 | 当前玩家: ${playerName}`;
-    ctx.fillText(infoText, this.width / 2, L.HEADER_Y);
-    
     const phaseName = PHASE_MAP[state.phase] || state.phase;
-    const phaseText = `阶段: ${phaseName} | 剩余掷骰次数: ${3 - state.turn.rollCount}`;
-    ctx.font = '16px sans-serif';
-    ctx.fillText(phaseText, this.width / 2, L.HEADER_Y + 25);
+    const remainingRolls = 3 - state.turn.rollCount;
+    ctx.textBaseline = 'top';
+    ctx.fillText(`${playerName} · 第 ${state.round} 轮`, this.width / 2, L.HEADER_Y);
+
+    ctx.font = '14px sans-serif';
+    this.drawCenteredSegments(
+      [
+        { text: '剩余 ', color: C.textSub },
+        { text: `${remainingRolls}`, color: C.primary },
+        { text: ' 次 · ', color: C.textSub },
+        { text: `${phaseName}`, color: C.textSub }
+      ],
+      L.HEADER_Y + 26
+    );
 
     // 3. 绘制骰子
-    this.hitRegions.dice = [];
     const diceStartX = (this.width - (5 * L.DICE_SIZE + 4 * L.DICE_GAP)) / 2;
     
     state.turn.dice.forEach((val, i) => {
@@ -93,26 +340,31 @@ export default class Renderer {
       const isHeld = state.turn.held[i];
 
       // 骰子背景
-      ctx.fillStyle = isHeld ? '#ffcccc' : '#ffffff';
+      ctx.fillStyle = isHeld ? C.heldFill : C.card;
       ctx.fillRect(x, y, L.DICE_SIZE, L.DICE_SIZE);
-      ctx.strokeStyle = '#000';
+      ctx.strokeStyle = isHeld ? C.heldStroke : C.diceStroke;
       ctx.strokeRect(x, y, L.DICE_SIZE, L.DICE_SIZE);
 
       // 骰子点数
-      ctx.fillStyle = '#000';
+      ctx.fillStyle = C.text;
       ctx.font = '30px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(val === 0 ? '?' : val, x + L.DICE_SIZE / 2, y + L.DICE_SIZE / 2);
+
+      if (isHeld) {
+        ctx.fillStyle = C.heldMark;
+        ctx.beginPath();
+        ctx.arc(x + 10, y + 10, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
       
       // 记录点击区域
       this.hitRegions.dice.push({ x, y, w: L.DICE_SIZE, h: L.DICE_SIZE, index: i });
     });
+    ctx.strokeStyle = C.diceStroke;
 
     // 4. 绘制操作按钮
-    this.hitRegions.btnRoll = null;
-    this.hitRegions.btnStop = null;
-    
     if (state.phase === Phase.ROLLING && state.turn.rollCount < 3) {
       // 计算按钮位置
       // 如果掷过至少一次 (rollCount >= 1)，显示两个按钮
@@ -126,8 +378,9 @@ export default class Renderer {
       
       // 1) 摇骰子按钮
       const rollX = startX;
-      ctx.fillStyle = '#007bff';
-      ctx.fillRect(rollX, L.BTN_Y, btnW, L.BTN_H);
+      const rollInset = this.pressed === 'btnRoll' ? 1 : 0;
+      ctx.fillStyle = this.pressed === 'btnRoll' ? C.primaryPressed : C.primary;
+      ctx.fillRect(rollX + rollInset, L.BTN_Y + rollInset, btnW - rollInset * 2, L.BTN_H - rollInset * 2);
       ctx.fillStyle = '#fff';
       ctx.font = '18px sans-serif';
       ctx.textAlign = 'center';
@@ -138,52 +391,65 @@ export default class Renderer {
       // 2) 选分按钮 (仅当已掷过)
       if (showStop) {
         const stopX = rollX + btnW + gap;
-        ctx.fillStyle = '#28a745'; // 绿色
-        ctx.fillRect(stopX, L.BTN_Y, btnW, L.BTN_H);
+        const stopInset = this.pressed === 'btnStop' ? 1 : 0;
+        ctx.fillStyle = this.pressed === 'btnStop' ? C.successPressed : C.success;
+        ctx.fillRect(stopX + stopInset, L.BTN_Y + stopInset, btnW - stopInset * 2, L.BTN_H - stopInset * 2);
         ctx.fillStyle = '#fff';
-        ctx.fillText('就它了!', stopX + btnW / 2, L.BTN_Y + L.BTN_H / 2);
+        ctx.fillText('选择计分', stopX + btnW / 2, L.BTN_Y + L.BTN_H / 2);
         this.hitRegions.btnStop = { x: stopX, y: L.BTN_Y, w: btnW, h: L.BTN_H };
       }
     }
 
     // 5. 绘制计分卡
     // 简单列表展示：Key | Score/Preview
-    this.hitRegions.scoreCells = [];
     const scoreOptions = getScoreOptionsForUI(state);
+    const minLineH = 34;
+    const maxLineH = 44;
+    const availableH = this.height - (L.SCORE_START_Y + 120);
+    const lineH = Math.max(minLineH, Math.min(maxLineH, Math.floor(availableH / Math.max(1, scoreOptions.length))));
+    const cellH = Math.max(28, lineH - 6);
     let scoreY = L.SCORE_START_Y;
     
     ctx.font = '14px sans-serif';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
+    ctx.textBaseline = 'middle';
 
     scoreOptions.forEach((opt) => {
       const x = 20;
       const w = this.width - 40;
-      const h = L.SCORE_LINE_H - 5;
+      const h = cellH;
       
       // 背景（区分已选、可选、禁用）
       if (!opt.enabled) {
-        ctx.fillStyle = '#ddd'; // 已使用
+        ctx.fillStyle = '#F3F4F6';
       } else if (state.phase === Phase.SELECT_SCORE) {
-        ctx.fillStyle = '#e6f7ff'; // 待选
+        ctx.fillStyle = '#e6f7ff';
       } else {
-        ctx.fillStyle = '#fff'; // 普通
+        ctx.fillStyle = C.card;
       }
       ctx.fillRect(x, scoreY, w, h);
+      ctx.strokeStyle = C.border;
       ctx.strokeRect(x, scoreY, w, h);
 
+      if (state.phase === Phase.SELECT_SCORE && opt.enabled) {
+        ctx.fillStyle = C.primary;
+        ctx.fillRect(x, scoreY, 4, h);
+      }
+
       // 文字
-      ctx.fillStyle = '#000';
+      ctx.fillStyle = !opt.enabled ? '#9CA3AF' : C.text;
       const label = SCORE_KEY_MAP[opt.key] || opt.key;
-      const val = opt.enabled ? `(预览: ${opt.preview})` : `得分: ${opt.preview}`;
-      ctx.fillText(`${label} - ${val}`, x + 10, scoreY + 5);
+      ctx.textAlign = 'left';
+      ctx.fillText(`${label}`, x + 12, scoreY + h / 2);
+      ctx.textAlign = 'right';
+      const rightText = opt.enabled ? `预览 ${opt.preview}` : `已用 ${opt.preview}`;
+      ctx.fillText(rightText, x + w - 12, scoreY + h / 2);
 
       // 记录点击区域（仅当处于选择阶段且该格可用时）
       if (state.phase === Phase.SELECT_SCORE && opt.enabled) {
-        this.hitRegions.scoreCells.push({ x, y: scoreY, w, h, key: opt.key });
+        this.hitRegions.scoreCells.push({ x, y: scoreY, w, h: lineH, key: opt.key });
       }
 
-      scoreY += L.SCORE_LINE_H;
+      scoreY += lineH;
     });
     
     // 6. 底部总分 (紧贴计分表)
@@ -193,7 +459,7 @@ export default class Renderer {
     // 在其下方留一点间距 (比如 10px) 绘制总分
     const totalY = scoreY + 10;
     
-    ctx.fillStyle = '#000';
+    ctx.fillStyle = C.text;
     ctx.font = '18px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top'; // 改为 top 以便对齐
@@ -235,13 +501,14 @@ export default class Renderer {
       const btnH = 44;
       const btnX = (this.width - btnW) / 2;
       const btnY = this.height / 2 + 50;
-      ctx.fillStyle = '#007bff';
-      ctx.fillRect(btnX, btnY, btnW, btnH);
+      const restartInset = this.pressed === 'btnRestart' ? 1 : 0;
+      ctx.fillStyle = this.pressed === 'btnRestart' ? C.primaryPressed : C.primary;
+      ctx.fillRect(btnX + restartInset, btnY + restartInset, btnW - restartInset * 2, btnH - restartInset * 2);
       ctx.fillStyle = '#fff';
       ctx.font = '18px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('重新开始', btnX + btnW / 2, btnY + btnH / 2);
+      ctx.fillText('再来一局', btnX + btnW / 2, btnY + btnH / 2);
       this.hitRegions.btnRestart = { x: btnX, y: btnY, w: btnW, h: btnH };
     } else {
       this.hitRegions.btnRestart = null;
