@@ -1,5 +1,6 @@
 import { Phase, ScoreKey } from '../core/engine/rules';
 import { getScoreOptionsForUI } from '../core/engine/uiSelectors';
+import { calcPlayerTotal } from '../core/engine/scoring';
 
 // 中文映射表
 const SCORE_KEY_MAP = {
@@ -185,7 +186,7 @@ export default class Renderer {
     });
     
     // 6. 底部总分 (紧贴计分表)
-    const totalScore = player.scoreCard ? Object.values(player.scoreCard).reduce((acc, c) => acc + (c.used ? c.score : 0), 0) : 0;
+    const totalScore = calcPlayerTotal(player);
     
     // scoreY 此时是最后一行计分格结束的 Y 坐标
     // 在其下方留一点间距 (比如 10px) 绘制总分
@@ -196,5 +197,38 @@ export default class Renderer {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top'; // 改为 top 以便对齐
     ctx.fillText(`总分: ${totalScore}`, this.width / 2, totalY);
+
+    // 7. 回合结束/游戏结束提示
+    if (state.phase === Phase.TURN_END) {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      ctx.fillRect(0, 0, this.width, this.height);
+      ctx.fillStyle = '#fff';
+      ctx.font = '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('回合结束', this.width / 2, this.height / 2 - 10);
+      ctx.font = '16px sans-serif';
+      ctx.fillText('正在切换到下一位玩家...', this.width / 2, this.height / 2 + 20);
+    }
+
+    if (state.phase === Phase.GAME_END) {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(0, 0, this.width, this.height);
+      ctx.fillStyle = '#fff';
+      ctx.font = '26px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText('游戏结束', this.width / 2, this.height / 2 - 120);
+
+      const rankings = state.players
+        .map(p => ({ name: p.name, total: calcPlayerTotal(p) }))
+        .sort((a, b) => b.total - a.total);
+
+      ctx.font = '18px sans-serif';
+      rankings.forEach((r, idx) => {
+        const line = `${idx + 1}. ${r.name} - ${r.total} 分`;
+        ctx.fillText(line, this.width / 2, this.height / 2 - 70 + idx * 26);
+      });
+    }
   }
 }
