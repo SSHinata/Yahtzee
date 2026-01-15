@@ -54,7 +54,8 @@ export default class Renderer {
       dice: [], // {x, y, w, h, index}
       btnRoll: null, // {x, y, w, h}
       btnStop: null, // {x, y, w, h}
-      scoreCells: [] // {x, y, w, h, key}
+      scoreCells: [], // {x, y, w, h, key}
+      btnRestart: null // {x, y, w, h}
     };
   }
 
@@ -229,6 +230,21 @@ export default class Renderer {
         const line = `${idx + 1}. ${r.name} - ${r.total} 分`;
         ctx.fillText(line, this.width / 2, this.height / 2 - 70 + idx * 26);
       });
+
+      const btnW = 160;
+      const btnH = 44;
+      const btnX = (this.width - btnW) / 2;
+      const btnY = this.height / 2 + 50;
+      ctx.fillStyle = '#007bff';
+      ctx.fillRect(btnX, btnY, btnW, btnH);
+      ctx.fillStyle = '#fff';
+      ctx.font = '18px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('重新开始', btnX + btnW / 2, btnY + btnH / 2);
+      this.hitRegions.btnRestart = { x: btnX, y: btnY, w: btnW, h: btnH };
+    } else {
+      this.hitRegions.btnRestart = null;
     }
   }
 }
