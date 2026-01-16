@@ -34,12 +34,15 @@ export default class InputHandler {
     const r = this.main.renderer.hitRegions;
     const s = this.main.screen;
     const keys = [];
+    if (this.main.ui && this.main.ui.confirmBackToMenuOpen) {
+      keys.push('modalCancel', 'modalConfirm');
+    } else
     if (s === 'menu') {
       keys.push('btnStartGame', 'btnRules');
     } else if (s === 'rules') {
       keys.push('btnBackToMenu', 'btnStartGameRule');
     } else {
-      keys.push('btnBackToMenu', 'btnRoll', 'btnStop', 'btnRestart');
+      keys.push('btnBackToMenu', 'btnRoll', 'btnStop', 'btnCancelScore', 'btnRestart');
     }
     for (const k of keys) {
       const rect = r[k];
@@ -68,10 +71,13 @@ export default class InputHandler {
       if (inside) {
         if (key === 'btnStartGame' || key === 'btnStartGameRule') this.main.startGame();
         else if (key === 'btnRules') this.main.goRules();
-        else if (key === 'btnBackToMenu') this.main.goMenu();
+        else if (key === 'btnBackToMenu') this.main.handleBackToMenu();
         else if (key === 'btnRoll') this.main.handleRoll();
         else if (key === 'btnStop') this.main.handleStopRolling();
+        else if (key === 'btnCancelScore') this.main.handleCancelScoreSelection();
         else if (key === 'btnRestart') this.main.handleRestart();
+        else if (key === 'modalCancel') this.main.handleCancelBackToMenu();
+        else if (key === 'modalConfirm') this.main.handleConfirmBackToMenu();
         this.touchStart = null;
         return;
       }
@@ -91,6 +97,18 @@ export default class InputHandler {
   handleTap(x, y) {
     const regions = this.main.renderer.hitRegions;
     const screen = this.main.screen;
+
+    if (this.main.ui && this.main.ui.confirmBackToMenuOpen) {
+      if (regions.modalCancel && this.isHit(x, y, regions.modalCancel)) {
+        this.main.handleCancelBackToMenu();
+        return;
+      }
+      if (regions.modalConfirm && this.isHit(x, y, regions.modalConfirm)) {
+        this.main.handleConfirmBackToMenu();
+        return;
+      }
+      return;
+    }
 
     if (screen === 'menu') {
       if (regions.btnStartGame && this.isHit(x, y, regions.btnStartGame)) {
@@ -117,7 +135,7 @@ export default class InputHandler {
     }
 
     if (regions.btnBackToMenu && this.isHit(x, y, regions.btnBackToMenu)) {
-      this.main.goMenu();
+      this.main.handleBackToMenu();
       return;
     }
     
@@ -137,6 +155,11 @@ export default class InputHandler {
     
     if (regions.btnStop && this.isHit(x, y, regions.btnStop)) {
       this.main.handleStopRolling();
+      return;
+    }
+
+    if (regions.btnCancelScore && this.isHit(x, y, regions.btnCancelScore)) {
+      this.main.handleCancelScoreSelection();
       return;
     }
 

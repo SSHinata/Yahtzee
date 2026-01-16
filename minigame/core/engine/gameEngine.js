@@ -96,12 +96,17 @@ function actionRoll(state, rng) {
   // 实际上只有在计分时才会真正结算奖励，但需要在 UI 上提示
   const isExtra = detectExtraYahtzee(newDice, player);
   
+  // 如果自动进入选分阶段，也需要将 dice 锁定
+  const nextPhase = shouldSelect ? Phase.SELECT_SCORE : Phase.ROLLING;
+  const nextHeld = shouldSelect ? [true, true, true, true, true] : state.turn.held;
+
   return {
     ...state,
-    phase: shouldSelect ? Phase.SELECT_SCORE : Phase.ROLLING,
+    phase: nextPhase,
     turn: {
       ...state.turn,
       dice: newDice,
+      held: nextHeld,
       rollCount: newRollCount,
       isExtraYahtzee: isExtra,
       lastRollAt: Date.now()
@@ -144,8 +149,29 @@ function actionStopRolling(state) {
     phase: Phase.SELECT_SCORE,
     turn: {
       ...state.turn,
+      // 进入选分阶段时，视觉上应该“锁定”所有骰子
+      // 逻辑上 held 全部置 true，防止误操作，也符合“停止掷骰”的含义
+      held: [true, true, true, true, true],
       isExtraYahtzee: isExtra
     }
+  };
+}
+
+/**
+ * 4.6 动作：取消选分，返回掷骰阶段
+ * 仅当 rollCount < 3 时允许
+ */
+function actionCancelScoreSelection(state) {
+  if (state.phase !== Phase.SELECT_SCORE) return state;
+  // 如果已经掷满3次，不能退回
+  if (state.turn.rollCount >= 3) return state;
+
+  return {
+    ...state,
+    phase: Phase.ROLLING
+    // 骰子的 held 状态保持为全 true 还是恢复之前的状态？
+    // 简单起见，这里保持全 true，玩家需要再次点击骰子来取消保留（或者我们可以记录之前的 held 状态来恢复，但这需要额外的状态字段）
+    // 为了用户体验，全选比较安全，玩家想重掷哪些就点哪些取消保留。
   };
 }
 
@@ -261,6 +287,7 @@ module.exports = {
   actionRoll,
   actionToggleHold,
   actionStopRolling,
+  actionCancelScoreSelection,
   actionApplyScore,
   endTurnAndAdvance,
   isGameOver

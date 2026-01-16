@@ -1,4 +1,4 @@
-import { createNewGame, startTurn, actionRoll, actionToggleHold, actionStopRolling, actionApplyScore, endTurnAndAdvance } from '../core/engine/gameEngine';
+import { createNewGame, startTurn, actionRoll, actionToggleHold, actionStopRolling, actionCancelScoreSelection, actionApplyScore, endTurnAndAdvance } from '../core/engine/gameEngine';
 import { Phase } from '../core/engine/rules';
 import Renderer from './render';
 import InputHandler from './input';
@@ -42,6 +42,7 @@ export default class Main {
 
       this.screen = 'menu';
       this.pressedKey = null;
+      this.ui = { confirmBackToMenuOpen: false };
 
       // 初始化渲染器
       this.renderer = new Renderer(this.ctx, this.logicWidth, this.logicHeight, safeAreaTop);
@@ -153,7 +154,8 @@ export default class Main {
         this.screen,
         this.state,
         this.bgImageLoaded ? this.bgImage : null,
-        this.paperBgImageLoaded ? this.paperBgImage : null
+        this.paperBgImageLoaded ? this.paperBgImage : null,
+        this.ui
       );
     }
   }
@@ -162,6 +164,27 @@ export default class Main {
 
   goMenu() {
     this.screen = 'menu';
+  }
+
+  handleBackToMenu() {
+    if (this.screen !== 'game') {
+      this.goMenu();
+      return;
+    }
+    this.ui.confirmBackToMenuOpen = true;
+    this.pressedKey = null;
+  }
+
+  handleCancelBackToMenu() {
+    this.ui.confirmBackToMenuOpen = false;
+    this.pressedKey = null;
+  }
+
+  handleConfirmBackToMenu() {
+    this.ui.confirmBackToMenuOpen = false;
+    this.state = createNewGame(this.players);
+    this.goMenu();
+    this.pressedKey = null;
   }
 
   goRules() {
@@ -194,6 +217,10 @@ export default class Main {
   
   handleStopRolling() {
     this.state = actionStopRolling(this.state);
+  }
+
+  handleCancelScoreSelection() {
+    this.state = actionCancelScoreSelection(this.state);
   }
 
   handleApplyScore(key) {

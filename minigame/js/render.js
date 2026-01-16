@@ -41,35 +41,60 @@ export default class Renderer {
       border: '#E6E8EC',
       text: '#1F2937',
       textSub: '#6B7280',
-      primary: '#007bff',
+      primary: '#007bff', // 蓝色
       primaryPressed: '#0062cc',
-      success: '#28a745',
+      success: '#28a745', // 绿色
       successPressed: '#218838',
       grayBtn: '#6c757d',
       grayBtnPressed: '#5a6268',
       diceStroke: '#111827',
-      heldFill: '#FFE8E8',
-      heldStroke: '#FF6B6B',
-      heldMark: '#FF6B6B'
+      heldFill: '#FFE8E8', // 浅红背景
+      heldStroke: '#FF6B6B', // 粗边框颜色
+      heldMark: '#FF6B6B',
+      phaseRolling: '#007bff', // 掷骰阶段色
+      phaseScoring: '#28a745', // 计分阶段色
+      scoreUsedBg: '#F3F4F6',
+      scoreUsedText: '#9CA3AF',
+      scoreSelectableBg: '#F0FDF4', // 浅绿背景
+      scoreSelectableBorder: '#28a745'
     };
     
     // 简单的布局常量
     const safeTop = safeAreaTop || 20;
-    const topBarH = 48;
     this.safeTop = safeTop;
-    this.topBarH = topBarH;
+    
+    // 三段式布局 Y 轴规划
+    // 1. 顶部状态区
+    const statusY = safeTop + 10;
+    const statusH = 90; // 紧凑的卡片
+    
+    // 2. 中部掷骰区
+    // 状态区下方留白 20
+    const diceAreaY = statusY + statusH + 20;
+    const diceAreaH = 160; // 包含骰子和按钮
+    
+    // 3. 底部计分卡区
+    // 剩余空间全给计分卡
+    const scoreY = diceAreaY + diceAreaH + 20;
+    
     this.LAYOUT = {
-      HEADER_Y: safeTop + topBarH + 16,
-      DICE_Y: safeTop + topBarH + 72,
+      STATUS_Y: statusY,
+      STATUS_H: statusH,
+      
+      DICE_AREA_Y: diceAreaY,
+      DICE_AREA_H: diceAreaH,
       DICE_SIZE: 50,
-      DICE_GAP: 10,
-      BTN_Y: safeTop + topBarH + 152,
-      BTN_W: 120,
-      BTN_H: 40,
-      SCORE_START_Y: safeTop + topBarH + 224,
-      SCORE_LINE_H: 36,
+      DICE_GAP: 12,
+      
+      SCORE_Y: scoreY,
+      // 底部留一点 margin
+      SCORE_H_OFFSET: 20, 
+      
+      BTN_W: 130,
+      BTN_H: 44,
+      
       TOP_BTN_H: 28,
-      TOP_BTN_W: 120
+      TOP_BTN_W: 80
     };
     
     // 用于点击检测的区域缓存
@@ -77,16 +102,19 @@ export default class Renderer {
       dice: [], // {x, y, w, h, index}
       btnRoll: null, // {x, y, w, h}
       btnStop: null, // {x, y, w, h}
+      btnCancelScore: null, // {x, y, w, h}
       scoreCells: [], // {x, y, w, h, key}
       btnRestart: null, // {x, y, w, h}
       btnBackToMenu: null, // {x, y, w, h}
+      modalCancel: null, // {x, y, w, h}
+      modalConfirm: null, // {x, y, w, h}
       btnStartGame: null, // {x, y, w, h}
       btnRules: null // {x, y, w, h}
     };
     this.pressed = null;
   }
 
-  render(screen, state, bgImage, paperBgImage) {
+  render(screen, state, bgImage, paperBgImage, ui) {
     if (screen === 'menu') {
       this.renderMenu(bgImage, paperBgImage);
       return;
@@ -95,19 +123,112 @@ export default class Renderer {
       this.renderRules(bgImage); // 传入背景图
       return;
     }
-    this.renderGame(state);
+    this.renderGame(state, bgImage, paperBgImage, ui);
   }
 
   resetHitRegions() {
     this.hitRegions.dice = [];
     this.hitRegions.btnRoll = null;
     this.hitRegions.btnStop = null;
+    this.hitRegions.btnCancelScore = null;
     this.hitRegions.scoreCells = [];
     this.hitRegions.btnRestart = null;
     this.hitRegions.btnBackToMenu = null;
+    this.hitRegions.modalCancel = null;
+    this.hitRegions.modalConfirm = null;
     this.hitRegions.btnStartGame = null;
     this.hitRegions.btnRules = null;
     this.hitRegions.btnStartGameRule = null;
+  }
+
+  drawConfirmBackToMenuModal() {
+    const ctx = this.ctx;
+    const C = this.COLORS;
+
+    ctx.fillStyle = 'rgba(32, 24, 20, 0.62)';
+    ctx.fillRect(0, 0, this.width, this.height);
+
+    const cardW = Math.min(320, this.width - 48);
+    const cardH = 200;
+    const cardX = (this.width - cardW) / 2;
+    const cardY = (this.height - cardH) / 2;
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.10)';
+    ctx.shadowBlur = 22;
+    ctx.shadowOffsetY = 10;
+    ctx.fillStyle = '#FFF8E7';
+    this.drawRoundedRect(cardX, cardY, cardW, cardH, 22);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.fillStyle = '#3F2F23';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('这局还没结束哦', cardX + cardW / 2, cardY + 18);
+
+    ctx.fillStyle = '#6B5B4B';
+    ctx.font = '14px sans-serif';
+    const paddingX = 24;
+    const contentX = cardX + paddingX;
+    const contentY = cardY + 58;
+    const contentMaxW = cardW - paddingX * 2;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    this.drawWrappedText('返回后将放弃当前对局进度。', contentX, contentY, contentMaxW, 20);
+
+    const btnH = 40;
+    const gap = 12;
+    const btnW = (cardW - 40 - gap) / 2;
+    const btnY = cardY + cardH - btnH - 16;
+    const cancelX = cardX + 20;
+    const confirmX = cancelX + btnW + gap;
+
+    const drawModalBtn = (key, x, y, w, h, label, variant) => {
+      const inset = this.pressed === key ? 2 : 0;
+      const rx = x + inset;
+      const ry = y + inset;
+      const rw = w - inset * 2;
+      const rh = h - inset * 2;
+
+      ctx.save();
+      if (variant === 'primary') {
+        if (inset === 0) {
+          ctx.shadowColor = 'rgba(0, 123, 255, 0.25)';
+          ctx.shadowBlur = 10;
+          ctx.shadowOffsetY = 4;
+        }
+        ctx.fillStyle = inset ? C.primaryPressed : C.primary;
+        this.drawRoundedRect(rx, ry, rw, rh, 14);
+        ctx.fill();
+        ctx.restore();
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 14px sans-serif';
+      } else {
+        ctx.fillStyle = inset ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.55)';
+        this.drawRoundedRect(rx, ry, rw, rh, 14);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(63, 47, 35, 0.18)';
+        ctx.lineWidth = 1;
+        this.drawRoundedRect(rx, ry, rw, rh, 14);
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.fillStyle = '#6B5B4B';
+        ctx.font = '14px sans-serif';
+      }
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, x + w / 2, y + h / 2);
+    };
+
+    drawModalBtn('modalCancel', cancelX, btnY, btnW, btnH, '继续游戏', 'primary');
+    drawModalBtn('modalConfirm', confirmX, btnY, btnW, btnH, '返回主页面', 'secondary');
+
+    this.hitRegions.modalCancel = { x: cancelX, y: btnY, w: btnW, h: btnH };
+    this.hitRegions.modalConfirm = { x: confirmX, y: btnY, w: btnW, h: btnH };
   }
 
   setPressed(key) {
@@ -576,231 +697,539 @@ export default class Renderer {
     this.hitRegions.btnStartGameRule = { x: cardX, y: btnY, w: cardW, h: btnH };
   }
 
-  renderGame(state) {
+  drawStatusCard(state) {
+    const ctx = this.ctx;
+    const L = this.LAYOUT;
+    const C = this.COLORS;
+    
+    // 卡片位置
+    const cardX = 16;
+    const cardW = this.width - 32;
+    const cardY = L.STATUS_Y;
+    const cardH = L.STATUS_H;
+    
+    // 1. 绘制卡片背景 (白色圆角)
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.05)';
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 2;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    this.drawRoundedRect(cardX, cardY, cardW, cardH, 16);
+    ctx.fill();
+    ctx.restore();
+    
+    const backW = 30;
+    const backH = 30;
+    const backX = cardX + 10;
+    const backY = cardY + 10;
+    
+    if (this.pressed === 'btnBackToMenu') {
+      ctx.fillStyle = 'rgba(0,0,0,0.05)';
+      ctx.beginPath();
+      ctx.arc(backX + backW/2, backY + backH/2, 16, 0, Math.PI*2);
+      ctx.fill();
+    }
+    
+    ctx.fillStyle = '#9CA3AF';
+    ctx.font = '20px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('←', backX + backW/2, backY + backH/2);
+    
+    const hitPadding = 10;
+    this.hitRegions.btnBackToMenu = { 
+      x: backX - hitPadding, 
+      y: backY - hitPadding, 
+      w: backW + hitPadding * 2, 
+      h: backH + hitPadding * 2 
+    };
+    
+    // 3. 信息展示
+    const player = state.players[state.currentPlayerIndex];
+    const playerName = player.name.replace('Player', '玩家');
+    const isRolling = state.phase === Phase.ROLLING || state.phase === Phase.TURN_START;
+    const phaseText = isRolling ? '掷骰阶段' : '计分阶段';
+    const phaseColor = isRolling ? C.phaseRolling : C.phaseScoring;
+    const remainingRolls = 3 - state.turn.rollCount;
+    
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    
+    ctx.fillStyle = C.text;
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText(playerName, backX + backW + 10, cardY + 30);
+    
+    // 右侧：回合数
+    ctx.textAlign = 'right';
+    ctx.font = '16px sans-serif';
+    ctx.fillStyle = C.textSub;
+    ctx.fillText(`第 ${state.round} / 13 轮`, cardX + cardW - 20, cardY + 30);
+    
+    // 分隔线
+    ctx.beginPath();
+    ctx.strokeStyle = '#F3F4F6';
+    ctx.lineWidth = 1;
+    ctx.moveTo(cardX + 20, cardY + 50);
+    ctx.lineTo(cardX + cardW - 20, cardY + 50);
+    ctx.stroke();
+    
+    // 第二行：阶段 + 剩余次数
+    const row2Y = cardY + 70;
+    
+    // 左侧：阶段指示 (带颜色的小圆点 + 文字)
+    ctx.textAlign = 'left';
+    ctx.fillStyle = phaseColor;
+    ctx.beginPath();
+    ctx.arc(cardX + 24, row2Y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(phaseText, cardX + 36, row2Y);
+    
+    // 右侧：剩余次数 (仅在掷骰阶段显示)
+    if (isRolling) {
+      ctx.textAlign = 'right';
+      ctx.fillStyle = C.textSub;
+      ctx.font = '14px sans-serif';
+      ctx.fillText('剩余次数: ', cardX + cardW - 40, row2Y);
+      
+      ctx.fillStyle = C.primary;
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillText(`${remainingRolls}`, cardX + cardW - 20, row2Y);
+    } else {
+       // 计分阶段提示
+      ctx.textAlign = 'right';
+      ctx.fillStyle = C.success;
+      ctx.font = '14px sans-serif';
+      ctx.fillText('请选择一项计分', cardX + cardW - 20, row2Y);
+    }
+  }
+
+  drawDiceArea(state) {
+    const ctx = this.ctx;
+    const L = this.LAYOUT;
+    const C = this.COLORS;
+    
+    // 区域背景 (透明，只作为容器)
+    // 1. 绘制骰子
+    // 计算总宽度以居中
+    const totalDiceW = 5 * L.DICE_SIZE + 4 * L.DICE_GAP;
+    const startX = (this.width - totalDiceW) / 2;
+    // 骰子基础 Y 坐标 (垂直居中于 DICE_AREA 的上半部分)
+    const baseY = L.DICE_AREA_Y + 20; 
+    
+    state.turn.dice.forEach((val, i) => {
+      const isHeld = state.turn.held[i];
+      // Held 状态：上移 10px
+      const y = isHeld ? baseY - 10 : baseY;
+      const x = startX + i * (L.DICE_SIZE + L.DICE_GAP);
+      
+      // 阴影
+      ctx.save();
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.1)';
+      ctx.shadowBlur = isHeld ? 15 : 5;
+      ctx.shadowOffsetY = isHeld ? 8 : 2;
+      
+      // 背景
+      ctx.fillStyle = isHeld ? C.heldFill : C.card;
+      this.drawRoundedRect(x, y, L.DICE_SIZE, L.DICE_SIZE, 8);
+      ctx.fill();
+      ctx.restore();
+      
+      // 边框
+      ctx.lineWidth = isHeld ? 2 : 1;
+      ctx.strokeStyle = isHeld ? C.heldStroke : '#E5E7EB';
+      this.drawRoundedRect(x, y, L.DICE_SIZE, L.DICE_SIZE, 8);
+      ctx.stroke();
+      
+      // 点数
+      ctx.fillStyle = C.text;
+      ctx.font = 'bold 28px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(val === 0 ? '?' : val, x + L.DICE_SIZE / 2, y + L.DICE_SIZE / 2);
+      
+      // 注册点击区域
+      this.hitRegions.dice.push({ x, y, w: L.DICE_SIZE, h: L.DICE_SIZE, index: i });
+    });
+    
+    // 2. 绘制按钮 (位于骰子下方)
+    const btnY = baseY + L.DICE_SIZE + 30;
+    
+    if (state.phase === Phase.ROLLING && state.turn.rollCount < 3) {
+      // 居中显示按钮
+      // 如果已掷过 (rollCount > 0)，显示 "摇骰子" 和 "选分"
+      // 否则只显示 "摇骰子"
+      const showStop = state.turn.rollCount > 0;
+      const gap = 16;
+      const rollBtnW = showStop ? L.BTN_W : 160; // 单按钮时宽一点
+      const totalBtnW = showStop ? (rollBtnW + gap + L.BTN_W) : rollBtnW;
+      const btnStartX = (this.width - totalBtnW) / 2;
+      
+      // --- 摇骰子按钮 ---
+      const rollX = btnStartX;
+      const rollInset = this.pressed === 'btnRoll' ? 2 : 0;
+      
+      ctx.save();
+      // 投影
+      if (rollInset === 0) {
+        ctx.shadowColor = 'rgba(0, 123, 255, 0.3)';
+        ctx.shadowBlur = 8;
+        ctx.shadowOffsetY = 3;
+      }
+      ctx.fillStyle = this.pressed === 'btnRoll' ? C.primaryPressed : C.primary;
+      this.drawRoundedRect(rollX + rollInset, btnY + rollInset, rollBtnW - rollInset * 2, L.BTN_H - rollInset * 2, 22);
+      ctx.fill();
+      ctx.restore();
+      
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 16px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const rollText = state.turn.rollCount === 0 ? '摇骰子' : `再摇一次`;
+      ctx.fillText(rollText, rollX + rollBtnW / 2, btnY + L.BTN_H / 2);
+      
+      this.hitRegions.btnRoll = { x: rollX, y: btnY, w: rollBtnW, h: L.BTN_H };
+      
+      // --- 选分按钮 (绿色，仅当 showStop) ---
+      if (showStop) {
+        const stopX = rollX + rollBtnW + gap;
+        const stopInset = this.pressed === 'btnStop' ? 2 : 0;
+        
+        ctx.save();
+        // 弱化显示：如果是掷骰阶段，选分不是首选操作，但为了方便也要显示
+        // 设计文档说：同一时刻只突出一个主要操作。
+        // 在 Rolling 阶段，"再摇一次" 是主操作？还是说只要能选分了，选分也可以是主操作？
+        // 文档：摇骰子：蓝色主按钮；选择计分：绿色主按钮（仅在计分阶段强调）。
+        // 所以这里应该把“选择计分”做成次级按钮（灰色或空心）？
+        // 但文档 4.2.2 说 "不可用状态必须明显弱化"。这里是可用的。
+        // 我们用绿色描边或浅绿色背景来表示“可选但不强调”，或者直接给绿色实心但小一点？
+        // 为了清晰，我们还是用绿色实心，但去掉强烈阴影。
+        
+        ctx.fillStyle = this.pressed === 'btnStop' ? C.successPressed : C.success;
+        this.drawRoundedRect(stopX + stopInset, btnY + stopInset, L.BTN_W - stopInset * 2, L.BTN_H - stopInset * 2, 22);
+        ctx.fill();
+        ctx.restore();
+        
+        ctx.fillStyle = '#fff';
+      ctx.fillText('选择计分', stopX + L.BTN_W / 2, btnY + L.BTN_H / 2);
+      
+      this.hitRegions.btnStop = { x: stopX, y: btnY, w: L.BTN_W, h: L.BTN_H };
+    }
+  } else if (state.phase === Phase.SELECT_SCORE) {
+     // 计分阶段
+     // 1. 提示文本
+     ctx.fillStyle = C.success;
+     ctx.font = 'bold 16px sans-serif';
+     ctx.textAlign = 'center';
+     ctx.textBaseline = 'middle';
+     
+     // 2. 如果还有剩余掷骰次数 (rollCount < 3)，显示“继续投掷”按钮
+     if (state.turn.rollCount < 3) {
+       const cancelBtnW = 140;
+       const cancelBtnX = (this.width - cancelBtnW) / 2;
+       const cancelInset = this.pressed === 'btnCancelScore' ? 2 : 0;
+       
+       ctx.save();
+       // 按钮样式：浅灰色或描边，表示“返回”
+       ctx.fillStyle = this.pressed === 'btnCancelScore' ? '#E5E7EB' : '#F3F4F6';
+       this.drawRoundedRect(cancelBtnX + cancelInset, btnY + cancelInset, cancelBtnW - cancelInset*2, L.BTN_H - cancelInset*2, 22);
+       ctx.fill();
+       
+       ctx.strokeStyle = '#D1D5DB';
+       ctx.lineWidth = 1;
+       this.drawRoundedRect(cancelBtnX + cancelInset, btnY + cancelInset, cancelBtnW - cancelInset*2, L.BTN_H - cancelInset*2, 22);
+       ctx.stroke();
+       ctx.restore();
+       
+       ctx.fillStyle = C.text;
+       ctx.font = '14px sans-serif';
+       ctx.fillText('继续投掷', cancelBtnX + cancelBtnW / 2, btnY + L.BTN_H / 2);
+       
+       this.hitRegions.btnCancelScore = { x: cancelBtnX, y: btnY, w: cancelBtnW, h: L.BTN_H };
+       
+       // 提示文本移到按钮下方
+       ctx.fillStyle = C.success;
+       ctx.fillText('👇 或点击下方列表计分', this.width / 2, btnY + L.BTN_H + 20);
+     } else {
+       // 没有次数了，只能计分
+       ctx.fillText('👇 请点击下方列表计分', this.width / 2, btnY + 20);
+     }
+  }
+}
+
+  drawScoreCard(state) {
+    const ctx = this.ctx;
+    const L = this.LAYOUT;
+    const C = this.COLORS;
+    
+    const cardX = 16;
+    const cardW = this.width - 32;
+    const cardY = L.SCORE_Y;
+    // 计算剩余高度
+    const cardH = this.height - cardY - L.SCORE_H_OFFSET;
+    
+    // 1. 绘制大卡片背景
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.05)';
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = -2; // 向上一点阴影
+    ctx.fillStyle = '#FFFFFF';
+    // 顶部圆角，底部可以直角或圆角
+    this.drawRoundedRect(cardX, cardY, cardW, cardH, 16);
+    ctx.fill();
+    ctx.restore();
+    
+    // 2. 标题
+    const titleH = 40;
+    ctx.fillStyle = C.text;
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('计分表', this.width / 2, cardY + 20);
+    
+    // 3. 列表内容
+    const listY = cardY + titleH;
+    const listH = cardH - titleH - 10;
+    
+    const scoreOptions = getScoreOptionsForUI(state);
+    // 简单计算行高，确保能放下
+    // 共有 13 项 + 2 个标题 = 15 行
+    // 如果高度不够，就得缩小
+    const totalItems = scoreOptions.length + 2; // +2 for group headers
+    let itemH = Math.floor(listH / totalItems);
+    itemH = Math.min(36, Math.max(24, itemH)); // 限制在 24~36 之间
+    
+    let currentY = listY;
+    
+    const drawRow = (opt) => {
+      const isUsed = !opt.enabled;
+      const isSelectable = state.phase === Phase.SELECT_SCORE && opt.enabled;
+      
+      const rowX = cardX + 10;
+      const rowW = cardW - 20;
+      const rowH = itemH - 4; // 留间隙
+      
+      // 背景
+      if (isUsed) {
+        ctx.fillStyle = C.scoreUsedBg;
+        this.drawRoundedRect(rowX, currentY, rowW, rowH, 6);
+        ctx.fill();
+      } else if (isSelectable) {
+        ctx.fillStyle = C.scoreSelectableBg;
+        this.drawRoundedRect(rowX, currentY, rowW, rowH, 6);
+        ctx.fill();
+        ctx.strokeStyle = C.scoreSelectableBorder;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+      
+      // 文字
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      const label = SCORE_KEY_MAP[opt.key] || opt.key;
+      
+      // 规则名称
+      ctx.fillStyle = isUsed ? C.scoreUsedText : C.text;
+      ctx.font = isSelectable ? 'bold 14px sans-serif' : '14px sans-serif';
+      ctx.fillText(label, rowX + 10, currentY + rowH / 2);
+      
+      // 分数/预览
+      ctx.textAlign = 'right';
+      const scoreText = isUsed ? `${opt.preview}` : (opt.preview !== undefined ? `${opt.preview}` : '-');
+      // 如果是可选状态，分数用主色强调
+      ctx.fillStyle = isUsed ? C.scoreUsedText : (isSelectable ? C.primary : C.textSub);
+      ctx.fillText(scoreText, rowX + rowW - 10, currentY + rowH / 2);
+      
+      // 注册点击
+      if (isSelectable) {
+        this.hitRegions.scoreCells.push({ x: rowX, y: currentY, w: rowW, h: rowH, key: opt.key });
+      }
+      
+      currentY += itemH;
+    };
+    
+    const drawHeader = (text) => {
+      ctx.fillStyle = C.textSub;
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(text, cardX + 20, currentY + itemH - 4);
+      
+      // 细线
+      ctx.beginPath();
+      ctx.strokeStyle = '#E5E7EB';
+      ctx.moveTo(cardX + 20 + ctx.measureText(text).width + 10, currentY + itemH - 10);
+      ctx.lineTo(cardX + cardW - 20, currentY + itemH - 10);
+      ctx.stroke();
+      
+      currentY += itemH;
+    };
+    
+    // 分组绘制
+    // 数字区: keys 1-6
+    drawHeader('数字区');
+    scoreOptions.slice(0, 6).forEach(drawRow);
+    
+    // 组合区
+    drawHeader('组合区');
+    scoreOptions.slice(6).forEach(drawRow);
+    
+    // 底部总分显示在标题栏右侧？或者列表底部？
+    // 放在标题栏右侧比较省空间
+    const totalScore = calcPlayerTotal(state.players[state.currentPlayerIndex]);
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = C.primary;
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillText(`总分: ${totalScore}`, cardX + cardW - 20, cardY + 20);
+  }
+
+  renderGame(state, bgImage, paperBgImage, ui) {
     const ctx = this.ctx;
     const L = this.LAYOUT;
     const C = this.COLORS;
     this.resetHitRegions();
 
-    ctx.fillStyle = C.bg;
-    ctx.fillRect(0, 0, this.width, this.height);
-
-    const backW = L.TOP_BTN_W;
-    const backH = L.TOP_BTN_H;
-    const backX = 20;
-    const backY = this.safeTop + 10;
-    const backInset = this.pressed === 'btnBackToMenu' ? 1 : 0;
-    ctx.fillStyle = this.pressed === 'btnBackToMenu' ? C.grayBtnPressed : C.grayBtn;
-    ctx.fillRect(backX + backInset, backY + backInset, backW - backInset * 2, backH - backInset * 2);
-    ctx.fillStyle = '#fff';
-    ctx.font = '14px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('返回主界面', backX + backW / 2, backY + backH / 2);
-    this.hitRegions.btnBackToMenu = { x: backX, y: backY, w: backW, h: backH };
-
-    ctx.fillStyle = C.text;
-    ctx.font = '18px sans-serif';
-    ctx.textAlign = 'center';
-    const player = state.players[state.currentPlayerIndex];
-    const playerName = player.name.replace('Player', '玩家');
-    const phaseName = PHASE_MAP[state.phase] || state.phase;
-    const remainingRolls = 3 - state.turn.rollCount;
-    ctx.textBaseline = 'top';
-    ctx.fillText(`${playerName} · 第 ${state.round} 轮`, this.width / 2, L.HEADER_Y);
-
-    ctx.font = '14px sans-serif';
-    this.drawCenteredSegments(
-      [
-        { text: '剩余 ', color: C.textSub },
-        { text: `${remainingRolls}`, color: C.primary },
-        { text: ' 次 · ', color: C.textSub },
-        { text: `${phaseName}`, color: C.textSub }
-      ],
-      L.HEADER_Y + 26
-    );
-
-    // 3. 绘制骰子
-    const diceStartX = (this.width - (5 * L.DICE_SIZE + 4 * L.DICE_GAP)) / 2;
-    
-    state.turn.dice.forEach((val, i) => {
-      const x = diceStartX + i * (L.DICE_SIZE + L.DICE_GAP);
-      const y = L.DICE_Y;
-      const isHeld = state.turn.held[i];
-
-      // 骰子背景
-      ctx.fillStyle = isHeld ? C.heldFill : C.card;
-      ctx.fillRect(x, y, L.DICE_SIZE, L.DICE_SIZE);
-      ctx.strokeStyle = isHeld ? C.heldStroke : C.diceStroke;
-      ctx.strokeRect(x, y, L.DICE_SIZE, L.DICE_SIZE);
-
-      // 骰子点数
-      ctx.fillStyle = C.text;
-      ctx.font = '30px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(val === 0 ? '?' : val, x + L.DICE_SIZE / 2, y + L.DICE_SIZE / 2);
-
-      if (isHeld) {
-        ctx.fillStyle = C.heldMark;
-        ctx.beginPath();
-        ctx.arc(x + 10, y + 10, 5, 0, Math.PI * 2);
-        ctx.fill();
+    // 1. 背景绘制 (与 Menu/Rules 统一逻辑)
+    if (bgImage) {
+      const imgRatio = bgImage.width / bgImage.height;
+      const screenRatio = this.width / this.height;
+      let sw, sh, sx, sy;
+      
+      if (screenRatio > imgRatio) {
+        sw = bgImage.width;
+        sh = bgImage.width / screenRatio;
+        sx = 0;
+        sy = (bgImage.height - sh) / 2;
+      } else {
+        sh = bgImage.height;
+        sw = bgImage.height * screenRatio;
+        sx = (bgImage.width - sw) / 2;
+        sy = 0;
       }
-      
-      // 记录点击区域
-      this.hitRegions.dice.push({ x, y, w: L.DICE_SIZE, h: L.DICE_SIZE, index: i });
-    });
-    ctx.strokeStyle = C.diceStroke;
-
-    // 4. 绘制操作按钮
-    if (state.phase === Phase.ROLLING && state.turn.rollCount < 3) {
-      // 计算按钮位置
-      // 如果掷过至少一次 (rollCount >= 1)，显示两个按钮
-      const showStop = state.turn.rollCount >= 1;
-      
-      const btnW = showStop ? 100 : L.BTN_W;
-      const gap = 20;
-      // 居中排列
-      const totalW = showStop ? (btnW * 2 + gap) : btnW;
-      const startX = (this.width - totalW) / 2;
-      
-      // 1) 摇骰子按钮
-      const rollX = startX;
-      const rollInset = this.pressed === 'btnRoll' ? 1 : 0;
-      ctx.fillStyle = this.pressed === 'btnRoll' ? C.primaryPressed : C.primary;
-      ctx.fillRect(rollX + rollInset, L.BTN_Y + rollInset, btnW - rollInset * 2, L.BTN_H - rollInset * 2);
-      ctx.fillStyle = '#fff';
-      ctx.font = '18px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('摇骰子', rollX + btnW / 2, L.BTN_Y + L.BTN_H / 2);
-      this.hitRegions.btnRoll = { x: rollX, y: L.BTN_Y, w: btnW, h: L.BTN_H };
-      
-      // 2) 选分按钮 (仅当已掷过)
-      if (showStop) {
-        const stopX = rollX + btnW + gap;
-        const stopInset = this.pressed === 'btnStop' ? 1 : 0;
-        ctx.fillStyle = this.pressed === 'btnStop' ? C.successPressed : C.success;
-        ctx.fillRect(stopX + stopInset, L.BTN_Y + stopInset, btnW - stopInset * 2, L.BTN_H - stopInset * 2);
-        ctx.fillStyle = '#fff';
-        ctx.fillText('选择计分', stopX + btnW / 2, L.BTN_Y + L.BTN_H / 2);
-        this.hitRegions.btnStop = { x: stopX, y: L.BTN_Y, w: btnW, h: L.BTN_H };
-      }
+      ctx.drawImage(bgImage, sx, sy, sw, sh, 0, 0, this.width, this.height);
+    } else {
+      ctx.fillStyle = C.bg;
+      ctx.fillRect(0, 0, this.width, this.height);
     }
 
-    // 5. 绘制计分卡
-    // 简单列表展示：Key | Score/Preview
-    const scoreOptions = getScoreOptionsForUI(state);
-    const minLineH = 34;
-    const maxLineH = 44;
-    const availableH = this.height - (L.SCORE_START_Y + 120);
-    const lineH = Math.max(minLineH, Math.min(maxLineH, Math.floor(availableH / Math.max(1, scoreOptions.length))));
-    const cellH = Math.max(28, lineH - 6);
-    let scoreY = L.SCORE_START_Y;
+    // 1.5 中景装饰 (如果存在)
+    if (paperBgImage) {
+      // 宽度设定为屏幕宽度的 90%
+      const pW = this.width * 0.9;
+      const pH = pW * (paperBgImage.height / paperBgImage.width);
+      const pX = (this.width - pW) / 2;
+      // 垂直居中偏上一点
+      const pY = (this.height - pH) / 2 - 20;
+
+      ctx.save();
+      ctx.globalAlpha = 0.4; // 较淡，作为氛围背景
+      ctx.drawImage(paperBgImage, pX, pY, pW, pH);
+      ctx.restore();
+    }
     
-    ctx.font = '14px sans-serif';
-    ctx.textBaseline = 'middle';
-
-    scoreOptions.forEach((opt) => {
-      const x = 20;
-      const w = this.width - 40;
-      const h = cellH;
-      
-      // 背景（区分已选、可选、禁用）
-      if (!opt.enabled) {
-        ctx.fillStyle = '#F3F4F6';
-      } else if (state.phase === Phase.SELECT_SCORE) {
-        ctx.fillStyle = '#e6f7ff';
-      } else {
-        ctx.fillStyle = C.card;
-      }
-      ctx.fillRect(x, scoreY, w, h);
-      ctx.strokeStyle = C.border;
-      ctx.strokeRect(x, scoreY, w, h);
-
-      if (state.phase === Phase.SELECT_SCORE && opt.enabled) {
-        ctx.fillStyle = C.primary;
-        ctx.fillRect(x, scoreY, 4, h);
-      }
-
-      // 文字
-      ctx.fillStyle = !opt.enabled ? '#9CA3AF' : C.text;
-      const label = SCORE_KEY_MAP[opt.key] || opt.key;
-      ctx.textAlign = 'left';
-      ctx.fillText(`${label}`, x + 12, scoreY + h / 2);
-      ctx.textAlign = 'right';
-      const rightText = opt.enabled ? `预览 ${opt.preview}` : `已用 ${opt.preview}`;
-      ctx.fillText(rightText, x + w - 12, scoreY + h / 2);
-
-      // 记录点击区域（仅当处于选择阶段且该格可用时）
-      if (state.phase === Phase.SELECT_SCORE && opt.enabled) {
-        this.hitRegions.scoreCells.push({ x, y: scoreY, w, h: lineH, key: opt.key });
-      }
-
-      scoreY += lineH;
-    });
+    // 2. 绘制三段式布局
+    this.drawStatusCard(state);
+    this.drawDiceArea(state);
+    this.drawScoreCard(state);
     
-    // 6. 底部总分 (紧贴计分表)
-    const totalScore = calcPlayerTotal(player);
-    
-    // scoreY 此时是最后一行计分格结束的 Y 坐标
-    // 在其下方留一点间距 (比如 10px) 绘制总分
-    const totalY = scoreY + 10;
-    
-    ctx.fillStyle = C.text;
-    ctx.font = '18px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top'; // 改为 top 以便对齐
-    ctx.fillText(`总分: ${totalScore}`, this.width / 2, totalY);
-
-    // 7. 回合结束/游戏结束提示
+    // 4. 回合结束/游戏结束 遮罩层 (保持原有逻辑)
     if (state.phase === Phase.TURN_END) {
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-      ctx.fillRect(0, 0, this.width, this.height);
-      ctx.fillStyle = '#fff';
-      ctx.font = '24px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('回合结束', this.width / 2, this.height / 2 - 10);
-      ctx.font = '16px sans-serif';
-      ctx.fillText('正在切换到下一位玩家...', this.width / 2, this.height / 2 + 20);
+      this.drawOverlay('回合结束', '正在切换下一位玩家...');
     }
 
     if (state.phase === Phase.GAME_END) {
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-      ctx.fillRect(0, 0, this.width, this.height);
-      ctx.fillStyle = '#fff';
-      ctx.font = '26px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      ctx.fillText('游戏结束', this.width / 2, this.height / 2 - 120);
-
-      const rankings = state.players
-        .map(p => ({ name: p.name, total: calcPlayerTotal(p) }))
-        .sort((a, b) => b.total - a.total);
-
-      ctx.font = '18px sans-serif';
-      rankings.forEach((r, idx) => {
-        const line = `${idx + 1}. ${r.name} - ${r.total} 分`;
-        ctx.fillText(line, this.width / 2, this.height / 2 - 70 + idx * 26);
-      });
-
-      const btnW = 160;
-      const btnH = 44;
-      const btnX = (this.width - btnW) / 2;
-      const btnY = this.height / 2 + 50;
-      const restartInset = this.pressed === 'btnRestart' ? 1 : 0;
-      ctx.fillStyle = this.pressed === 'btnRestart' ? C.primaryPressed : C.primary;
-      ctx.fillRect(btnX + restartInset, btnY + restartInset, btnW - restartInset * 2, btnH - restartInset * 2);
-      ctx.fillStyle = '#fff';
-      ctx.font = '18px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('再来一局', btnX + btnW / 2, btnY + btnH / 2);
-      this.hitRegions.btnRestart = { x: btnX, y: btnY, w: btnW, h: btnH };
+      this.renderGameEnd(state);
     } else {
       this.hitRegions.btnRestart = null;
     }
+
+    if (ui && ui.confirmBackToMenuOpen) {
+      this.drawConfirmBackToMenuModal();
+    }
+  }
+  
+  drawOverlay(title, subTitle) {
+    const ctx = this.ctx;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(0, 0, this.width, this.height);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(title, this.width / 2, this.height / 2 - 10);
+    if (subTitle) {
+      ctx.font = '16px sans-serif';
+      ctx.fillText(subTitle, this.width / 2, this.height / 2 + 25);
+    }
+  }
+  
+  renderGameEnd(state) {
+    const ctx = this.ctx;
+    const C = this.COLORS;
+    
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(0, 0, this.width, this.height);
+    
+    const centerX = this.width / 2;
+    const centerY = this.height / 2;
+    
+    // 结算卡片
+    const cardW = 280;
+    const cardH = 320;
+    const cardX = (this.width - cardW) / 2;
+    const cardY = (this.height - cardH) / 2;
+    
+    ctx.fillStyle = '#FFF';
+    this.drawRoundedRect(cardX, cardY, cardW, cardH, 16);
+    ctx.fill();
+    
+    ctx.fillStyle = C.text;
+    ctx.font = 'bold 24px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('游戏结束', centerX, cardY + 30);
+    
+    // 排名
+    const rankings = state.players
+      .map(p => ({ name: p.name, total: calcPlayerTotal(p) }))
+      .sort((a, b) => b.total - a.total);
+
+    let rankY = cardY + 80;
+    ctx.font = '18px sans-serif';
+    rankings.forEach((r, idx) => {
+      const isWinner = idx === 0;
+      ctx.fillStyle = isWinner ? C.primary : C.text;
+      const prefix = isWinner ? '🏆 ' : `${idx + 1}. `;
+      const line = `${prefix}${r.name}`;
+      
+      ctx.textAlign = 'left';
+      ctx.fillText(line, cardX + 40, rankY);
+      
+      ctx.textAlign = 'right';
+      ctx.fillText(`${r.total} 分`, cardX + cardW - 40, rankY);
+      
+      rankY += 40;
+    });
+    
+    // 再来一局按钮
+    const btnW = 180;
+    const btnH = 48;
+    const btnX = centerX - btnW / 2;
+    const btnY = cardY + cardH - btnH - 30;
+    
+    const restartInset = this.pressed === 'btnRestart' ? 2 : 0;
+    ctx.fillStyle = this.pressed === 'btnRestart' ? C.primaryPressed : C.primary;
+    this.drawRoundedRect(btnX + restartInset, btnY + restartInset, btnW - restartInset*2, btnH - restartInset*2, 24);
+    ctx.fill();
+    
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('再来一局', centerX, btnY + btnH / 2);
+    
+    this.hitRegions.btnRestart = { x: btnX, y: btnY, w: btnW, h: btnH };
   }
 }
