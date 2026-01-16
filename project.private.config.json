@@ -1,6 +1,6 @@
 {
   "libVersion": "3.13.2",
-  "projectname": "%E9%AA%B0%E6%9D%A5%E9%AA%B0%E5%8E%BB",
+  "projectname": "Yahtzee",
   "setting": {
     "urlCheck": true,
     "coverView": true,
@@ -9,6 +9,14 @@
     "preloadBackgroundData": false,
     "autoAudits": false,
     "showShadowRootInWxmlPanel": true,
-    "compileHotReLoad": true
+    "compileHotReLoad": true,
+    "useApiHook": true,
+    "useStaticServer": false,
+    "useLanDebug": false,
+    "showES6CompileOption": false,
+    "checkInvalidKey": true,
+    "ignoreDevUnusedFiles": true,
+    "bigPackageSizeSupport": false,
+    "useIsolateContext": true
   }
 }
