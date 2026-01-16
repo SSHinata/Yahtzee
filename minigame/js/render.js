@@ -114,7 +114,7 @@ export default class Renderer {
     this.pressed = null;
   }
 
-  render(screen, state, bgImage, paperBgImage, ui) {
+  render(screen, state, bgImage, paperBgImage, ui, animState) {
     if (screen === 'menu') {
       this.renderMenu(bgImage, paperBgImage);
       return;
@@ -123,7 +123,7 @@ export default class Renderer {
       this.renderRules(bgImage); // 传入背景图
       return;
     }
-    this.renderGame(state, bgImage, paperBgImage, ui);
+    this.renderGame(state, bgImage, paperBgImage, ui, animState);
   }
 
   resetHitRegions() {
@@ -805,7 +805,7 @@ export default class Renderer {
     }
   }
 
-  drawDiceArea(state) {
+  drawDiceArea(state, animState) {
     const ctx = this.ctx;
     const L = this.LAYOUT;
     const C = this.COLORS;
@@ -824,38 +824,33 @@ export default class Renderer {
       const y = isHeld ? baseY - 10 : baseY;
       const x = startX + i * (L.DICE_SIZE + L.DICE_GAP);
       
-      // 阴影
-      ctx.save();
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.1)';
-      ctx.shadowBlur = isHeld ? 15 : 5;
-      ctx.shadowOffsetY = isHeld ? 8 : 2;
+      let displayValue = val;
+      let animProps = null;
+
+      // 如果有动画且当前骰子未被保留，则应用动画属性
+      if (animState && animState.active && !isHeld && animState.dice && animState.dice[i]) {
+        const d = animState.dice[i];
+        displayValue = d.val;
+        animProps = {
+          offsetX: d.offsetX,
+          offsetY: d.offsetY,
+          rotation: d.rotation,
+          scale: d.scale
+        };
+      }
+
+      this.drawDie(x, y, L.DICE_SIZE, displayValue, isHeld, animProps);
       
-      // 背景
-      ctx.fillStyle = isHeld ? C.heldFill : C.card;
-      this.drawRoundedRect(x, y, L.DICE_SIZE, L.DICE_SIZE, 8);
-      ctx.fill();
-      ctx.restore();
-      
-      // 边框
-      ctx.lineWidth = isHeld ? 2 : 1;
-      ctx.strokeStyle = isHeld ? C.heldStroke : '#E5E7EB';
-      this.drawRoundedRect(x, y, L.DICE_SIZE, L.DICE_SIZE, 8);
-      ctx.stroke();
-      
-      // 点数
-      ctx.fillStyle = C.text;
-      ctx.font = 'bold 28px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(val === 0 ? '?' : val, x + L.DICE_SIZE / 2, y + L.DICE_SIZE / 2);
-      
-      // 注册点击区域
-      this.hitRegions.dice.push({ x, y, w: L.DICE_SIZE, h: L.DICE_SIZE, index: i });
+      // 注册点击区域 (仅当不在动画中且在 Rolling 阶段有效)
+      if (!(animState && animState.active)) {
+         this.hitRegions.dice.push({ x, y, w: L.DICE_SIZE, h: L.DICE_SIZE, index: i });
+      }
     });
     
     // 2. 绘制按钮 (位于骰子下方)
     const btnY = baseY + L.DICE_SIZE + 30;
-    
+    const isAnimating = animState && animState.active;
+
     if (state.phase === Phase.ROLLING && state.turn.rollCount < 3) {
       // 居中显示按钮
       // 如果已掷过 (rollCount > 0)，显示 "摇骰子" 和 "选分"
@@ -871,8 +866,11 @@ export default class Renderer {
       const rollInset = this.pressed === 'btnRoll' ? 2 : 0;
       
       ctx.save();
+      if (isAnimating) {
+         ctx.globalAlpha = 0.6;
+      }
       // 投影
-      if (rollInset === 0) {
+      if (rollInset === 0 && !isAnimating) {
         ctx.shadowColor = 'rgba(0, 123, 255, 0.3)';
         ctx.shadowBlur = 8;
         ctx.shadowOffsetY = 3;
@@ -889,7 +887,9 @@ export default class Renderer {
       const rollText = state.turn.rollCount === 0 ? '摇骰子' : `再摇一次`;
       ctx.fillText(rollText, rollX + rollBtnW / 2, btnY + L.BTN_H / 2);
       
-      this.hitRegions.btnRoll = { x: rollX, y: btnY, w: rollBtnW, h: L.BTN_H };
+      if (!isAnimating) {
+        this.hitRegions.btnRoll = { x: rollX, y: btnY, w: rollBtnW, h: L.BTN_H };
+      }
       
       // --- 选分按钮 (绿色，仅当 showStop) ---
       if (showStop) {
@@ -897,14 +897,7 @@ export default class Renderer {
         const stopInset = this.pressed === 'btnStop' ? 2 : 0;
         
         ctx.save();
-        // 弱化显示：如果是掷骰阶段，选分不是首选操作，但为了方便也要显示
-        // 设计文档说：同一时刻只突出一个主要操作。
-        // 在 Rolling 阶段，"再摇一次" 是主操作？还是说只要能选分了，选分也可以是主操作？
-        // 文档：摇骰子：蓝色主按钮；选择计分：绿色主按钮（仅在计分阶段强调）。
-        // 所以这里应该把“选择计分”做成次级按钮（灰色或空心）？
-        // 但文档 4.2.2 说 "不可用状态必须明显弱化"。这里是可用的。
-        // 我们用绿色描边或浅绿色背景来表示“可选但不强调”，或者直接给绿色实心但小一点？
-        // 为了清晰，我们还是用绿色实心，但去掉强烈阴影。
+        if (isAnimating) ctx.globalAlpha = 0.6;
         
         ctx.fillStyle = this.pressed === 'btnStop' ? C.successPressed : C.success;
         this.drawRoundedRect(stopX + stopInset, btnY + stopInset, L.BTN_W - stopInset * 2, L.BTN_H - stopInset * 2, 22);
@@ -912,9 +905,11 @@ export default class Renderer {
         ctx.restore();
         
         ctx.fillStyle = '#fff';
-      ctx.fillText('选择计分', stopX + L.BTN_W / 2, btnY + L.BTN_H / 2);
+        ctx.fillText('选择计分', stopX + L.BTN_W / 2, btnY + L.BTN_H / 2);
       
-      this.hitRegions.btnStop = { x: stopX, y: btnY, w: L.BTN_W, h: L.BTN_H };
+        if (!isAnimating) {
+          this.hitRegions.btnStop = { x: stopX, y: btnY, w: L.BTN_W, h: L.BTN_H };
+        }
     }
   } else if (state.phase === Phase.SELECT_SCORE) {
      // 计分阶段
@@ -931,6 +926,8 @@ export default class Renderer {
        const cancelInset = this.pressed === 'btnCancelScore' ? 2 : 0;
        
        ctx.save();
+       if (isAnimating) ctx.globalAlpha = 0.6;
+
        // 按钮样式：浅灰色或描边，表示“返回”
        ctx.fillStyle = this.pressed === 'btnCancelScore' ? '#E5E7EB' : '#F3F4F6';
        this.drawRoundedRect(cancelBtnX + cancelInset, btnY + cancelInset, cancelBtnW - cancelInset*2, L.BTN_H - cancelInset*2, 22);
@@ -946,7 +943,9 @@ export default class Renderer {
        ctx.font = '14px sans-serif';
        ctx.fillText('继续投掷', cancelBtnX + cancelBtnW / 2, btnY + L.BTN_H / 2);
        
-       this.hitRegions.btnCancelScore = { x: cancelBtnX, y: btnY, w: cancelBtnW, h: L.BTN_H };
+       if (!isAnimating) {
+         this.hitRegions.btnCancelScore = { x: cancelBtnX, y: btnY, w: cancelBtnW, h: L.BTN_H };
+       }
        
        // 提示文本移到按钮下方
        ctx.fillStyle = C.success;
@@ -957,6 +956,93 @@ export default class Renderer {
      }
   }
 }
+
+  drawDie(x, y, size, value, isHeld, animProps) {
+    const ctx = this.ctx;
+    
+    const { offsetX = 0, offsetY = 0, rotation = 0, scale = 1 } = animProps || {};
+
+    const centerX = x + size / 2 + offsetX;
+    const centerY = y + size / 2 + offsetY;
+    const halfSize = (size * scale) / 2;
+    // 增加圆角，更像真实骰子
+    const cornerRadius = size * 0.22; 
+
+    ctx.save();
+    
+    ctx.translate(centerX, centerY);
+    ctx.rotate(rotation);
+    
+    // Shadow
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.15)';
+    ctx.shadowBlur = isHeld ? 15 : 6;
+    ctx.shadowOffsetY = isHeld ? 8 : 3;
+
+    // Background
+    ctx.fillStyle = isHeld ? '#FFF0F0' : '#FFFFFF';
+    
+    // Draw rect centered at (0,0)
+    this.drawRoundedRect(-halfSize, -halfSize, halfSize * 2, halfSize * 2, cornerRadius);
+    ctx.fill();
+    
+    // Border
+    ctx.shadowColor = 'transparent';
+    ctx.lineWidth = isHeld ? 3 : 1; 
+    ctx.strokeStyle = isHeld ? '#FF6B6B' : '#E5E7EB';
+    this.drawRoundedRect(-halfSize, -halfSize, halfSize * 2, halfSize * 2, cornerRadius);
+    ctx.stroke();
+
+    // Pips
+    if (value >= 1 && value <= 6) {
+        this.drawPips(value, halfSize * 2);
+    } else {
+        // Fallback for '?' or other values
+        ctx.fillStyle = '#333';
+        ctx.font = `bold ${size/2}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('?', 0, 0);
+    }
+
+    ctx.restore();
+  }
+
+  drawPips(value, size) {
+    const ctx = this.ctx;
+    const pipSize = size * 0.18;
+    const pipRadius = pipSize / 2;
+    
+    ctx.fillStyle = '#333';
+    
+    // Positions: -1, 0, 1
+    // Scale factor: size * 0.25
+    const d = size * 0.26;
+
+    const drawDot = (dx, dy) => {
+        ctx.beginPath();
+        ctx.arc(dx * d, dy * d, pipRadius, 0, Math.PI * 2);
+        ctx.fill();
+    };
+
+    if (value === 1) {
+        drawDot(0, 0);
+    } else if (value === 2) {
+        drawDot(-1, -1); drawDot(1, 1);
+    } else if (value === 3) {
+        drawDot(-1, -1); drawDot(0, 0); drawDot(1, 1);
+    } else if (value === 4) {
+        drawDot(-1, -1); drawDot(1, -1);
+        drawDot(-1, 1);  drawDot(1, 1);
+    } else if (value === 5) {
+        drawDot(-1, -1); drawDot(1, -1);
+        drawDot(0, 0);
+        drawDot(-1, 1);  drawDot(1, 1);
+    } else if (value === 6) {
+        drawDot(-1, -1); drawDot(1, -1);
+        drawDot(-1, 0);  drawDot(1, 0);
+        drawDot(-1, 1);  drawDot(1, 1);
+    }
+  }
 
   drawScoreCard(state) {
     const ctx = this.ctx;
@@ -1085,7 +1171,7 @@ export default class Renderer {
     ctx.fillText(`总分: ${totalScore}`, cardX + cardW - 20, cardY + 20);
   }
 
-  renderGame(state, bgImage, paperBgImage, ui) {
+  renderGame(state, bgImage, paperBgImage, ui, animState) {
     const ctx = this.ctx;
     const L = this.LAYOUT;
     const C = this.COLORS;
@@ -1131,7 +1217,7 @@ export default class Renderer {
     
     // 2. 绘制三段式布局
     this.drawStatusCard(state);
-    this.drawDiceArea(state);
+    this.drawDiceArea(state, animState);
     this.drawScoreCard(state);
     
     // 4. 回合结束/游戏结束 遮罩层 (保持原有逻辑)

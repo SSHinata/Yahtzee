@@ -90,15 +90,17 @@ function actionRoll(state, rng) {
   const player = currentPlayer(state);
   
   // 达到3次自动进入选分阶段
-  const shouldSelect = newRollCount === 3;
+  // const shouldSelect = newRollCount === 3; // 移除自动切换
   
   // 检查是否触发额外快艇奖励（仅在最后一次掷骰或玩家主动停止时检查，这里简化为每次掷骰都算一下状态）
   // 实际上只有在计分时才会真正结算奖励，但需要在 UI 上提示
   const isExtra = detectExtraYahtzee(newDice, player);
   
-  // 如果自动进入选分阶段，也需要将 dice 锁定
-  const nextPhase = shouldSelect ? Phase.SELECT_SCORE : Phase.ROLLING;
-  const nextHeld = shouldSelect ? [true, true, true, true, true] : state.turn.held;
+  // 即使达到3次，这里也不切 Phase，等待前端动画结束后手动调用 actionEnterScoreSelection
+  const nextPhase = Phase.ROLLING; 
+  // 掷骰时，自动清空 prevHeld，因为掷骰后之前的保留状态已经没有意义了（骰子值都变了）
+  // 但 nextHeld 保持不变（保留的继续保留）
+  const nextHeld = state.turn.held;
 
   return {
     ...state,
@@ -107,9 +109,27 @@ function actionRoll(state, rng) {
       ...state.turn,
       dice: newDice,
       held: nextHeld,
+      prevHeld: null, // 清空 prevHeld
       rollCount: newRollCount,
       isExtraYahtzee: isExtra,
       lastRollAt: Date.now()
+    }
+  };
+}
+
+/**
+ * 3.5 动作：动画结束后，如果次数已满，强制进入选分阶段
+ */
+function actionEnterScoreSelection(state) {
+  if (state.phase !== Phase.ROLLING) return state;
+  
+  return {
+    ...state,
+    phase: Phase.SELECT_SCORE,
+    turn: {
+      ...state.turn,
+      prevHeld: [...state.turn.held], // 记录当前的 held 状态
+      held: [true, true, true, true, true] // 锁定所有骰子
     }
   };
 }
@@ -151,6 +171,7 @@ function actionStopRolling(state) {
       ...state.turn,
       // 进入选分阶段时，视觉上应该“锁定”所有骰子
       // 逻辑上 held 全部置 true，防止误操作，也符合“停止掷骰”的含义
+      prevHeld: [...state.turn.held], // 记录当前的 held 状态
       held: [true, true, true, true, true],
       isExtraYahtzee: isExtra
     }
@@ -166,12 +187,17 @@ function actionCancelScoreSelection(state) {
   // 如果已经掷满3次，不能退回
   if (state.turn.rollCount >= 3) return state;
 
+  // 恢复之前的 held 状态
+  const restoredHeld = state.turn.prevHeld ? [...state.turn.prevHeld] : [false, false, false, false, false];
+
   return {
     ...state,
-    phase: Phase.ROLLING
-    // 骰子的 held 状态保持为全 true 还是恢复之前的状态？
-    // 简单起见，这里保持全 true，玩家需要再次点击骰子来取消保留（或者我们可以记录之前的 held 状态来恢复，但这需要额外的状态字段）
-    // 为了用户体验，全选比较安全，玩家想重掷哪些就点哪些取消保留。
+    phase: Phase.ROLLING,
+    turn: {
+      ...state.turn,
+      held: restoredHeld,
+      prevHeld: null // 清空备份
+    }
   };
 }
 
@@ -285,6 +311,7 @@ module.exports = {
   createNewGame,
   startTurn,
   actionRoll,
+  actionEnterScoreSelection,
   actionToggleHold,
   actionStopRolling,
   actionCancelScoreSelection,

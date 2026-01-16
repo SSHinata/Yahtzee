@@ -19,6 +19,7 @@ function initTurnState() {
     rollCount: 0,
     dice: [0, 0, 0, 0, 0], // 0 表示尚未掷出
     held: [false, false, false, false, false],
+    prevHeld: null,        // 用于在进入选分阶段前暂存 held 状态，以便撤销
     isExtraYahtzee: false, // 本回合是否触发快艇额外奖分
     lastRollAt: null       // 上次掷骰时间戳
   };

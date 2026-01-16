@@ -1,4 +1,4 @@
-import { createNewGame, startTurn, actionRoll, actionToggleHold, actionStopRolling, actionCancelScoreSelection, actionApplyScore, endTurnAndAdvance } from '../core/engine/gameEngine';
+import { createNewGame, startTurn, actionRoll, actionEnterScoreSelection, actionToggleHold, actionStopRolling, actionCancelScoreSelection, actionApplyScore, endTurnAndAdvance } from '../core/engine/gameEngine';
 import { Phase } from '../core/engine/rules';
 import Renderer from './render';
 import InputHandler from './input';
@@ -43,6 +43,9 @@ export default class Main {
       this.screen = 'menu';
       this.pressedKey = null;
       this.ui = { confirmBackToMenuOpen: false };
+      
+      // 动画状态
+      this.animState = { active: false, startTime: 0, dice: [] };
 
       // 初始化渲染器
       this.renderer = new Renderer(this.ctx, this.logicWidth, this.logicHeight, safeAreaTop);
@@ -65,12 +68,12 @@ export default class Main {
         }
         const nextSrc = this.bgImageSources[this.bgImageSourceIndex];
         this.bgImageSourceIndex += 1;
-        console.log('Loading background image:', nextSrc);
+        // console.log('Loading background image:', nextSrc);
         this.bgImage.src = nextSrc;
       };
 
       this.bgImage.onload = () => {
-        console.log('Background image loaded successfully');
+        // console.log('Background image loaded successfully');
         this.bgImageLoaded = true;
       };
       this.bgImage.onerror = (e) => {
@@ -103,7 +106,7 @@ export default class Main {
       };
 
       this.paperBgImage.onload = () => {
-        console.log('Paper background image loaded successfully');
+        // console.log('Paper background image loaded successfully');
         this.paperBgImageLoaded = true;
       };
       this.paperBgImage.onerror = (e) => {
@@ -137,6 +140,104 @@ export default class Main {
 
   update() {
     // 逻辑更新
+    this.updateAnimation();
+  }
+
+  updateAnimation() {
+    if (!this.animState || !this.animState.active) return;
+    
+    const now = Date.now();
+    const elapsed = now - this.animState.startTime;
+    
+    // 基础参数
+    const baseDuration = 400; // 基础旋转时长
+    const stagger = 80;       // 梯次间隔
+    const settleTime = 200;   // 落定回弹时长
+    
+    // 总动画时长 = 最后一个骰子的旋转结束时间 + 回弹时间
+    // 最后一个骰子索引是 4，所以是 baseDuration + 4 * stagger + settleTime
+    const totalDuration = baseDuration + 4 * stagger + settleTime;
+    
+    let allFinished = true;
+    
+    // 初始化 animState.dice (如果是刚开始)
+    if (this.animState.dice.length === 0) {
+       this.animState.dice = Array(5).fill(0).map(() => ({
+          val: 1, offsetX: 0, offsetY: 0, rotation: 0, scale: 1
+       }));
+    }
+
+    this.animState.dice.forEach((d, i) => {
+        // 如果被保留，则不播放动画
+        if (this.state.turn.held[i]) {
+            d.val = this.state.turn.dice[i];
+            d.offsetX = 0; d.offsetY = 0; d.rotation = 0; d.scale = 1;
+            return;
+        }
+
+        // 计算当前骰子的各个关键时间点
+        // 1. 旋转结束时间点 (Stop Rotating)
+        const stopTime = baseDuration + i * stagger;
+        // 2. 整个动画结束时间点 (All Done)
+        const endTime = stopTime + settleTime;
+
+        if (elapsed >= endTime) {
+            // 动画彻底结束，显示真值，归位
+            d.val = this.state.turn.dice[i];
+            d.offsetX = 0; d.offsetY = 0; d.rotation = 0; d.scale = 1;
+            return;
+        }
+        
+        allFinished = false;
+        
+        if (elapsed < stopTime) {
+            // 阶段一：混乱旋转期 (Cover Up)
+            // 即使是第5个骰子，也是从 0ms 就开始转，直到 stopTime
+            
+            d.offsetX = 0; d.offsetY = 0;
+            // 持续旋转，速度恒定
+            d.rotation += 0.5; 
+            d.scale = 1.15; // 放大，表示悬空
+            
+            // 随机显示点数 (Cover Up)
+            // 为了避免闪烁太快，每 3 帧 (约 48ms) 变一次
+            if (now % 48 < 16) {
+                 d.val = Math.floor(Math.random() * 6) + 1;
+            }
+        } else {
+            // 阶段二：落定回弹期 (Reveal)
+            // elapsed >= stopTime && elapsed < endTime
+            
+            d.val = this.state.turn.dice[i]; // 锁定真值
+            d.rotation = 0; // 摆正
+            
+            // 计算回弹进度 0 -> 1
+            const t = (elapsed - stopTime) / settleTime;
+            
+            // 简单的回弹效果：从 1.15 缩小回 1.0
+            // 可以加一点过冲效果：1.15 -> 0.95 -> 1.0
+            if (t < 0.6) {
+                // 前 60% 时间：1.15 -> 0.95
+                const subT = t / 0.6;
+                d.scale = 1.15 - (subT * 0.2);
+            } else {
+                // 后 40% 时间：0.95 -> 1.0
+                const subT = (t - 0.6) / 0.4;
+                d.scale = 0.95 + (subT * 0.05);
+            }
+        }
+    });
+    
+    if (allFinished) {
+        this.animState.active = false;
+        
+        // 动画结束，检查是否需要自动进入选分阶段
+        if (this.state.turn.rollCount >= 3 && this.state.phase === Phase.ROLLING) {
+             setTimeout(() => {
+                 this.state = actionEnterScoreSelection(this.state);
+             }, 500); // 留 500ms 给玩家看清楚结果
+        }
+    }
   }
 
   render() {
@@ -155,7 +256,8 @@ export default class Main {
         this.state,
         this.bgImageLoaded ? this.bgImage : null,
         this.paperBgImageLoaded ? this.paperBgImage : null,
-        this.ui
+        this.ui,
+        this.animState
       );
     }
   }
@@ -208,22 +310,40 @@ export default class Main {
   }
   
   handleRoll() {
+    if (this.animState.active) return;
     this.state = actionRoll(this.state);
+    this.startRollAnimation();
+  }
+  
+  startRollAnimation() {
+    this.animState = {
+        active: true,
+        startTime: Date.now(),
+        // duration 已不再是固定值，由 updateAnimation 内部计算
+        dice: Array(5).fill(0).map((_, i) => ({
+            val: this.state.turn.dice[i], 
+            offsetX: 0, offsetY: 0, rotation: 0, scale: 1
+        }))
+    };
   }
   
   handleToggleHold(diceIndex) {
+    if (this.animState.active) return;
     this.state = actionToggleHold(this.state, diceIndex);
   }
   
   handleStopRolling() {
+    if (this.animState.active) return;
     this.state = actionStopRolling(this.state);
   }
 
   handleCancelScoreSelection() {
+    if (this.animState.active) return;
     this.state = actionCancelScoreSelection(this.state);
   }
 
   handleApplyScore(key) {
+    if (this.animState.active) return;
     const result = actionApplyScore(this.state, key);
     if (result.error) {
       wx.showToast({ title: result.error, icon: 'none' });
