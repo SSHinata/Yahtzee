@@ -79,6 +79,39 @@ export default class Main {
 
       loadNextBgImage();
       
+      // 预加载中景图片 (paperBg1)
+      this.paperBgImage = wx.createImage();
+      this.paperBgImageLoaded = false;
+      this.paperBgImageSources = [
+        'resources/img/paperBg1.png',
+        '/resources/img/paperBg1.png',
+        'minigame/resources/img/paperBg1.png',
+        '/minigame/resources/img/paperBg1.png',
+      ];
+      this.paperBgImageSourceIndex = 0;
+
+      const loadNextPaperBgImage = () => {
+        if (this.paperBgImageSourceIndex >= this.paperBgImageSources.length) {
+          console.error('Paper background image load failed for all known paths.');
+          return;
+        }
+        const nextSrc = this.paperBgImageSources[this.paperBgImageSourceIndex];
+        this.paperBgImageSourceIndex += 1;
+        // console.log('Loading paper background image:', nextSrc);
+        this.paperBgImage.src = nextSrc;
+      };
+
+      this.paperBgImage.onload = () => {
+        console.log('Paper background image loaded successfully');
+        this.paperBgImageLoaded = true;
+      };
+      this.paperBgImage.onerror = (e) => {
+        console.error('Paper background image load failed:', e);
+        loadNextPaperBgImage();
+      };
+
+      loadNextPaperBgImage();
+      
       // 初始化输入处理
       this.inputHandler = new InputHandler(this);
 
@@ -116,7 +149,12 @@ export default class Main {
     // 绘制当前状态
     if (this.renderer) {
       this.renderer.setPressed(this.pressedKey);
-      this.renderer.render(this.screen, this.state, this.bgImageLoaded ? this.bgImage : null);
+      this.renderer.render(
+        this.screen,
+        this.state,
+        this.bgImageLoaded ? this.bgImage : null,
+        this.paperBgImageLoaded ? this.paperBgImage : null
+      );
     }
   }
   

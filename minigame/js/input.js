@@ -37,7 +37,7 @@ export default class InputHandler {
     if (s === 'menu') {
       keys.push('btnStartGame', 'btnRules');
     } else if (s === 'rules') {
-      keys.push('btnBackToMenu');
+      keys.push('btnBackToMenu', 'btnStartGameRule');
     } else {
       keys.push('btnBackToMenu', 'btnRoll', 'btnStop', 'btnRestart');
     }
@@ -66,7 +66,7 @@ export default class InputHandler {
       this.activeKey = null;
       this.main.clearPressedKey();
       if (inside) {
-        if (key === 'btnStartGame') this.main.startGame();
+        if (key === 'btnStartGame' || key === 'btnStartGameRule') this.main.startGame();
         else if (key === 'btnRules') this.main.goRules();
         else if (key === 'btnBackToMenu') this.main.goMenu();
         else if (key === 'btnRoll') this.main.handleRoll();
@@ -107,6 +107,10 @@ export default class InputHandler {
     if (screen === 'rules') {
       if (regions.btnBackToMenu && this.isHit(x, y, regions.btnBackToMenu)) {
         this.main.goMenu();
+        return;
+      }
+      if (regions.btnStartGameRule && this.isHit(x, y, regions.btnStartGameRule)) {
+        this.main.startGame();
         return;
       }
       return;

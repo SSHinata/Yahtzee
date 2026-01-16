@@ -86,13 +86,13 @@ export default class Renderer {
     this.pressed = null;
   }
 
-  render(screen, state) {
+  render(screen, state, bgImage, paperBgImage) {
     if (screen === 'menu') {
-      this.renderMenu();
+      this.renderMenu(bgImage, paperBgImage);
       return;
     }
     if (screen === 'rules') {
-      this.renderRules();
+      this.renderRules(bgImage); // 传入背景图
       return;
     }
     this.renderGame(state);
@@ -107,6 +107,7 @@ export default class Renderer {
     this.hitRegions.btnBackToMenu = null;
     this.hitRegions.btnStartGame = null;
     this.hitRegions.btnRules = null;
+    this.hitRegions.btnStartGameRule = null;
   }
 
   setPressed(key) {
@@ -188,7 +189,7 @@ export default class Renderer {
     ctx.shadowOffsetY = 0;
   }
 
-  renderMenu(bgImage) {
+  renderMenu(bgImage, paperBgImage) {
     const ctx = this.ctx;
     const C = this.COLORS;
     this.resetHitRegions();
@@ -218,13 +219,44 @@ export default class Renderer {
       ctx.fillRect(0, 0, this.width, this.height);
     }
 
+    // 1.5 绘制中景 (paperBg1)
+    if (paperBgImage) {
+      // 宽度设定为屏幕宽度的 85%
+      const pW = this.width * 0.85;
+      const pH = pW * (paperBgImage.height / paperBgImage.width);
+      const pX = (this.width - pW) / 2;
+      // 垂直居中
+      const pY = (this.height - pH) / 2;
+
+      ctx.save();
+      ctx.globalAlpha = 0.8; // 中景图片半透明
+      // 可选：添加一点投影，使其看起来像浮在背景上
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
+      ctx.shadowBlur = 15;
+      ctx.shadowOffsetY = 5;
+      
+      ctx.drawImage(paperBgImage, pX, pY, pW, pH);
+      ctx.restore();
+    }
+
     // 2. 标题区（卡片化）
     const titleCardW = Math.min(300, this.width - 40);
     const titleCardH = 100;
     const titleCardX = (this.width - titleCardW) / 2;
-    const titleCardY = this.safeTop + 80;
+    // 将标题放在上半区的中央
+    // 上半区高度约为 this.height / 2
+    // 标题卡片高度 titleCardH = 100
+    // 居中位置 = (this.height / 2 - titleCardH) / 2
+    const titleCardY = (this.height / 2 - titleCardH) / 2;
 
-    this.drawCard(titleCardX, titleCardY, titleCardW, titleCardH);
+    this.drawCard(titleCardX, titleCardY, titleCardW, titleCardH); // 注意：drawCard 内部使用了 fillStyle，需要调整 drawCard 或在此处覆盖
+
+    // 重新绘制半透明白底以覆盖 drawCard 默认的 0.9 透明度
+    ctx.save();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)'; // 更半透明一些
+    this.drawRoundedRect(titleCardX, titleCardY, titleCardW, titleCardH, 12);
+    ctx.fill();
+    ctx.restore();
 
     ctx.fillStyle = C.text;
     ctx.font = 'bold 32px sans-serif';
@@ -240,7 +272,10 @@ export default class Renderer {
     const btnW = 240;
     const btnH = 56;
     const gap = 24;
-    const startY = titleCardY + titleCardH + 60;
+    // 按钮放在中间偏下一点
+    // 中线位置 = this.height / 2
+    // 偏下一点 = + 40px
+    const startY = this.height / 2 + 40;
     const x = (this.width - btnW) / 2;
     
     // 开始游戏（实心蓝 + 投影）
@@ -292,85 +327,253 @@ export default class Renderer {
     this.hitRegions.btnRules = { x, y: rulesY, w: btnW, h: btnH };
   }
 
-  renderRules() {
+  renderRules(bgImage) {
     const ctx = this.ctx;
     const C = this.COLORS;
     this.resetHitRegions();
 
-    ctx.fillStyle = C.bg;
-    ctx.fillRect(0, 0, this.width, this.height);
+    // 1. 背景统一（使用主页背景或兜底色）
+    if (bgImage) {
+      const imgRatio = bgImage.width / bgImage.height;
+      const screenRatio = this.width / this.height;
+      let sw, sh, sx, sy;
+      
+      if (screenRatio > imgRatio) {
+        sw = bgImage.width;
+        sh = bgImage.width / screenRatio;
+        sx = 0;
+        sy = (bgImage.height - sh) / 2;
+      } else {
+        sh = bgImage.height;
+        sw = bgImage.height * screenRatio;
+        sx = (bgImage.width - sw) / 2;
+        sy = 0;
+      }
+      ctx.drawImage(bgImage, sx, sy, sw, sh, 0, 0, this.width, this.height);
+    } else {
+      ctx.fillStyle = C.bg;
+      ctx.fillRect(0, 0, this.width, this.height);
+    }
 
-    const backW = this.LAYOUT.TOP_BTN_W;
-    const backH = this.LAYOUT.TOP_BTN_H;
-    const backX = 20;
-    const backY = this.safeTop + 10;
+    // 2. 顶部 Header
+    // 布局：[< 返回]  游戏规则  (摘要在下)
+    const headerH = 80;
+    const headerY = this.safeTop + 10;
+    
+    // 返回按钮（左上角小图标+文字）
+    const backW = 80;
+    const backH = 32;
+    const backX = 16;
+    const backY = headerY;
+    
+    // 绘制返回按钮背景（淡雅风格）
     const backInset = this.pressed === 'btnBackToMenu' ? 1 : 0;
-    ctx.fillStyle = this.pressed === 'btnBackToMenu' ? C.grayBtnPressed : C.grayBtn;
-    ctx.fillRect(backX + backInset, backY + backInset, backW - backInset * 2, backH - backInset * 2);
-    ctx.fillStyle = '#fff';
+    ctx.save();
+    if (this.pressed === 'btnBackToMenu') {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+    } else {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    }
+    this.drawRoundedRect(backX + backInset, backY + backInset, backW - backInset * 2, backH - backInset * 2, 16);
+    ctx.fill();
+    
+    // 返回图标和文字
+    ctx.fillStyle = C.text;
     ctx.font = '14px sans-serif';
-    ctx.textAlign = 'center';
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText('返回主界面', backX + backW / 2, backY + backH / 2);
+    ctx.fillText('← 返回', backX + 16, backY + backH / 2);
+    ctx.restore();
+    
     this.hitRegions.btnBackToMenu = { x: backX, y: backY, w: backW, h: backH };
 
+    // 标题和摘要
     ctx.fillStyle = C.text;
-    ctx.font = '22px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillText('游戏规则', this.width / 2, backY + backH + 16);
-
-    ctx.fillStyle = C.text;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-
-    const contentX = 20;
-    const maxWidth = this.width - 40;
-    const lineHeight = 20;
-    let y = backY + backH + 60;
-
-    ctx.font = '16px sans-serif';
-    ctx.fillStyle = C.text;
-    y = this.drawWrappedText('玩法流程', contentX, y, maxWidth, lineHeight);
-    y += 6;
-
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillText('游戏规则', this.width / 2, headerY);
+    
+    // 摘要颜色减淡（弱于正文），增加垂直间距
+    ctx.fillStyle = '#9CA3AF'; // textSub 偏淡色
     ctx.font = '14px sans-serif';
-    ctx.fillStyle = C.textSub;
-    const flow = [
-      '• 每回合最多掷骰 3 次。',
-      '• 点击骰子可保留/取消保留。',
-      '• 掷过至少一次后，点击“选择计分”进入计分阶段。',
-      '• 计分阶段选择一个未使用的类别完成本回合。'
-    ];
-    for (const p of flow) {
-      y = this.drawWrappedText(p, contentX, y, maxWidth, lineHeight);
-      y += 4;
-    }
+    ctx.fillText('每回合最多掷 3 次，选 1 格计分，13 回合比总分', this.width / 2, headerY + 42); // 原 +36
 
-    y += 10;
-    ctx.font = '16px sans-serif';
+    // 分隔线
+    const lineY = headerY + 72; // 原 +64
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
+    ctx.lineWidth = 1;
+    ctx.moveTo(20, lineY);
+    ctx.lineTo(this.width - 20, lineY);
+    ctx.stroke();
+
+    // 3. 滚动区域内容（卡片化）
+    // 由于 Canvas 没有原生滚动，这里做静态排版，内容较多时假设屏幕够长或简化显示
+    // 实际项目中可能需要实现简单的触摸滚动，这里先按静态紧凑布局实现
+    
+    const cardGap = 16;
+    let currentY = lineY + 20;
+    const cardX = 16;
+    const cardW = this.width - 32;
+    
+    // 辅助函数：绘制卡片背景和标题
+    const drawCardBg = (title, height) => {
+      ctx.save();
+      // 卡片阴影
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.05)';
+      ctx.shadowBlur = 8;
+      ctx.shadowOffsetY = 2;
+      
+      // 卡片背景
+      ctx.fillStyle = '#FFFFFF';
+      this.drawRoundedRect(cardX, currentY, cardW, height, 12);
+      ctx.fill();
+      ctx.restore();
+      
+      // 标题
+      if (title) {
+        ctx.fillStyle = C.primary;
+        ctx.font = 'bold 16px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText(title, cardX + 16, currentY + 16);
+      }
+    };
+
+    // --- 卡片 A：玩法流程 ---
+    const flowH = 150;
+    drawCardBg('玩法流程', flowH);
+    
+    const flowItems = [
+      '掷骰子（每回合最多 3 次）',
+      '点击骰子保留/取消保留',
+      '点击“选择计分”进入计分阶段',
+      '选择一个未使用的类别完成回合'
+    ];
+    
+    let textY = currentY + 48;
+    ctx.font = '14px sans-serif';
+    
+    flowItems.forEach((item, index) => {
+      // 序号：灰蓝色
+      ctx.fillStyle = '#6B7280';
+      ctx.fillText(`${index + 1}.`, cardX + 16, textY);
+      
+      // 内容：深色
+      ctx.fillStyle = C.text;
+      ctx.fillText(item, cardX + 36, textY);
+      textY += 24;
+    });
+    
+    currentY += flowH + cardGap;
+
+    // --- 卡片 B：计分方式 ---
+    // 分为数字区和组合区
+    const scoreH = 260; // 预估高度
+    drawCardBg('计分方式', scoreH);
+    
+    textY = currentY + 48;
+    
+    // 分组标题样式
+    const drawSubTitle = (text, y) => {
+      ctx.fillStyle = '#4B5563'; // 深灰
+      ctx.font = 'bold 15px sans-serif'; // 原 13px
+      ctx.fillText(text, cardX + 16, y);
+    };
+    
+    const drawScoreItem = (name, rule, score, y, boldScore = false) => {
+      ctx.fillStyle = C.text;
+      ctx.font = '14px sans-serif';
+      ctx.fillText(name, cardX + 16, y);
+      
+      // 规则文本
+      ctx.fillStyle = '#666';
+      ctx.font = '13px sans-serif';
+      ctx.fillText(rule, cardX + 100, y); // 原 +80，增加间距
+
+      // 分数文本
+      if (score) {
+        // 计算规则文本宽度，以便在后面接分数
+        const ruleW = ctx.measureText(rule).width;
+        const scoreX = cardX + 100 + ruleW + 8; // 原 +80
+        
+        ctx.fillStyle = boldScore ? C.primary : '#666';
+        ctx.font = boldScore ? 'bold 13px sans-serif' : '13px sans-serif';
+        ctx.fillText(score, scoreX, y);
+      }
+    };
+
+    // 数字区
+    drawSubTitle('数字区 (1~6点)', textY);
+    textY += 24;
+    drawScoreItem('1~6点', '对应点数', '总和', textY, true);
+    textY += 20;
+    drawScoreItem('奖励', '总和≥63', '+35分', textY, true);
+    
+    textY += 30;
+    
+    // 组合区
+    drawSubTitle('组合区', textY);
+    textY += 24;
+    // [name, rule, score, bold?]
+    const combos = [
+      ['三条/四条', '3/4个相同', '总和', true],
+      ['葫芦', '3+2组合', '25分', true],
+      ['小/大顺', '4/5连号', '30/40分', true],
+      ['快艇', '5个相同', '50分', true],
+      ['全选', '任意组合', '总和', true]
+    ];
+    
+    combos.forEach(([name, rule, score, bold]) => {
+      drawScoreItem(name, rule, score, textY, bold);
+      textY += 20;
+    });
+    
+    currentY += scoreH + cardGap;
+
+    // --- 卡片 D：快速示例 ---
+    const exH = 130; // 原 110，增加高度以适应 padding
+    drawCardBg('快速示例', exH);
+    
+    textY = currentY + 48;
     ctx.fillStyle = C.text;
-    y = this.drawWrappedText('计分方式', contentX, y, maxWidth, lineHeight);
-    y += 6;
+    ctx.font = '14px sans-serif';
+    // 优化：骰子展示图形化
+    ctx.fillText('🎲 [ 2 · 2 · 2 · 5 · 1 ]', cardX + 16, textY);
+    textY += 24;
+    ctx.fillStyle = '#666';
+    ctx.fillText('👉 选「二点」: 2+2+2 = 6分', cardX + 16, textY);
+    textY += 24;
+    ctx.fillText('👉 选「三条」: 2+2+2+5+1 = 12分', cardX + 16, textY);
+    
+    currentY += exH + cardGap;
 
-    ctx.font = '13px sans-serif';
-    ctx.fillStyle = C.textSub;
-    const scoring = [
-      '• 一点/两点/三点/四点/五点/六点：对应点数之和。',
-      '• 三条：任意 3 个相同，得分为 5 个骰子总和，否则 0。',
-      '• 四条：任意 4 个相同，得分为 5 个骰子总和，否则 0。',
-      '• 葫芦：3+2 组合，固定 25 分，否则 0。',
-      '• 小顺：任意 4 连（如 1-2-3-4），固定 30 分，否则 0。',
-      '• 大顺：5 连（1-2-3-4-5 或 2-3-4-5-6），固定 40 分，否则 0。',
-      '• 快艇：5 个相同，固定 50 分，否则 0。',
-      '• 全选：5 个骰子总和。',
-      '• 上层奖励：一点~六点合计 ≥ 63，额外 +35 分。',
-      '• 额外快艇：若已成功计过一次快艇（50 分），之后再掷出快艇可额外 +100 分（本项目不启用 Joker 万能牌规则）。'
-    ];
-    for (const p of scoring) {
-      y = this.drawWrappedText(p, contentX, y, maxWidth, lineHeight);
-      y += 4;
-    }
+    // --- 底部按钮：开始游戏 ---
+    const btnH = 48;
+    // 增加与上方内容的间距：原 -20 改为 -40，给用户心理缓冲
+    const btnY = this.height - this.safeTop - btnH - 40;
+    
+    // 按钮背景
+    const btnInset = this.pressed === 'btnStartGameRule' ? 2 : 0;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 123, 255, 0.3)';
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 4;
+    
+    ctx.fillStyle = this.pressed === 'btnStartGameRule' ? C.primaryPressed : C.primary;
+    this.drawRoundedRect(cardX + btnInset, btnY + btnInset, cardW - btnInset * 2, btnH - btnInset * 2, 24);
+    ctx.fill();
+    ctx.restore();
+    
+    // 按钮文字
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('我知道了，开始游戏', this.width / 2, btnY + btnH / 2);
+    
+    this.hitRegions.btnStartGameRule = { x: cardX, y: btnY, w: cardW, h: btnH };
   }
 
   renderGame(state) {
