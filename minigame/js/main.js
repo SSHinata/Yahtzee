@@ -45,6 +45,27 @@ export default class Main {
 
       // 初始化渲染器
       this.renderer = new Renderer(this.ctx, this.logicWidth, this.logicHeight, safeAreaTop);
+
+      // 预加载背景图片
+      this.bgImage = wx.createImage();
+      // 错误日志显示路径被解析为 /Users/pitaya/workspace/Yahtzee/minigame/minigame/resources/img/indexBg1.png
+      // 说明小游戏根目录已经是 minigame/，我们不应该再加 minigame/ 前缀
+      // 直接使用 resources/img/indexBg1.png
+      this.bgImage.src = 'resources/img/indexBg1.png';
+      
+      this.bgImageLoaded = false;
+      this.bgImage.onload = () => {
+        console.log('Background image loaded successfully');
+        this.bgImageLoaded = true;
+      };
+      this.bgImage.onerror = (e) => {
+        console.error('Background image load failed:', e);
+        // 如果失败，尝试加 / 前缀（根路径）
+        if (this.bgImage.src.indexOf('/') !== 0) {
+           console.log('Retrying with / prefix...');
+           this.bgImage.src = '/resources/img/indexBg1.png';
+        }
+      };
       
       // 初始化输入处理
       this.inputHandler = new InputHandler(this);
@@ -83,7 +104,7 @@ export default class Main {
     // 绘制当前状态
     if (this.renderer) {
       this.renderer.setPressed(this.pressedKey);
-      this.renderer.render(this.screen, this.state);
+      this.renderer.render(this.screen, this.state, this.bgImageLoaded ? this.bgImage : null);
     }
   }
   

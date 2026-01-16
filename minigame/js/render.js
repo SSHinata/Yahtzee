@@ -155,53 +155,139 @@ export default class Renderer {
     ctx.textBaseline = prevBaseline;
   }
 
-  renderMenu() {
+  drawRoundedRect(x, y, w, h, r) {
+    const ctx = this.ctx;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.arcTo(x + w, y, x + w, y + r, r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+    ctx.lineTo(x + r, y + h);
+    ctx.arcTo(x, y + h, x, y + h - r, r);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
+    ctx.closePath();
+  }
+
+  drawCard(x, y, w, h) {
+    const ctx = this.ctx;
+    // 阴影
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.1)';
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 4;
+    
+    // 半透明白底
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    this.drawRoundedRect(x, y, w, h, 12);
+    ctx.fill();
+    
+    // 重置阴影
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+  }
+
+  renderMenu(bgImage) {
     const ctx = this.ctx;
     const C = this.COLORS;
     this.resetHitRegions();
 
-    ctx.fillStyle = C.bg;
-    ctx.fillRect(0, 0, this.width, this.height);
+    // 1. 绘制背景图或纯色兜底
+    if (bgImage) {
+      // 保持比例拉伸填满
+      // 简单做法：cover 模式
+      const imgRatio = bgImage.width / bgImage.height;
+      const screenRatio = this.width / this.height;
+      let sw, sh, sx, sy;
+      
+      if (screenRatio > imgRatio) {
+        sw = bgImage.width;
+        sh = bgImage.width / screenRatio;
+        sx = 0;
+        sy = (bgImage.height - sh) / 2;
+      } else {
+        sh = bgImage.height;
+        sw = bgImage.height * screenRatio;
+        sx = (bgImage.width - sw) / 2;
+        sy = 0;
+      }
+      ctx.drawImage(bgImage, sx, sy, sw, sh, 0, 0, this.width, this.height);
+    } else {
+      ctx.fillStyle = C.bg;
+      ctx.fillRect(0, 0, this.width, this.height);
+    }
+
+    // 2. 标题区（卡片化）
+    const titleCardW = Math.min(300, this.width - 40);
+    const titleCardH = 100;
+    const titleCardX = (this.width - titleCardW) / 2;
+    const titleCardY = this.safeTop + 80;
+
+    this.drawCard(titleCardX, titleCardY, titleCardW, titleCardH);
 
     ctx.fillStyle = C.text;
-    ctx.font = '28px sans-serif';
+    ctx.font = 'bold 32px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('骰来骰去', this.width / 2, this.safeTop + 64);
+    ctx.fillText('骰来骰去', this.width / 2, titleCardY + 40);
+    
     ctx.fillStyle = C.textSub;
     ctx.font = '16px sans-serif';
-    ctx.fillText('掷骰计分对战', this.width / 2, this.safeTop + 96);
+    ctx.fillText('掷骰计分对战', this.width / 2, titleCardY + 75);
 
-    const btnW = 200;
-    const btnH = 52;
-    const gap = 18;
-    const startY = this.safeTop + 132;
+    // 3. 按钮区
+    const btnW = 240;
+    const btnH = 56;
+    const gap = 24;
+    const startY = titleCardY + titleCardH + 60;
     const x = (this.width - btnW) / 2;
-    const startInset = this.pressed === 'btnStartGame' ? 1 : 0;
-
+    
+    // 开始游戏（实心蓝 + 投影）
+    const startInset = this.pressed === 'btnStartGame' ? 2 : 0;
+    
+    ctx.save();
+    if (startInset === 0) {
+      ctx.shadowColor = 'rgba(0, 123, 255, 0.3)';
+      ctx.shadowBlur = 10;
+      ctx.shadowOffsetY = 4;
+    }
     ctx.fillStyle = this.pressed === 'btnStartGame' ? C.primaryPressed : C.primary;
-    ctx.fillRect(x + startInset, startY + startInset, btnW - startInset * 2, btnH - startInset * 2);
+    this.drawRoundedRect(x + startInset, startY + startInset, btnW - startInset * 2, btnH - startInset * 2, 28);
+    ctx.fill();
+    ctx.restore();
+
     ctx.fillStyle = '#fff';
-    ctx.font = '20px sans-serif';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
     ctx.fillText('开始游戏', x + btnW / 2, startY + btnH / 2);
     this.hitRegions.btnStartGame = { x, y: startY, w: btnW, h: btnH };
 
+    // 游戏规则（描边/浅色）
     const rulesY = startY + btnH + gap;
-    const rulesInset = this.pressed === 'btnRules' ? 1 : 0;
+    const rulesInset = this.pressed === 'btnRules' ? 2 : 0;
+    
+    ctx.save();
     if (this.pressed === 'btnRules') {
-      ctx.fillStyle = '#E9F7EF';
-      ctx.fillRect(x + rulesInset, rulesY + rulesInset, btnW - rulesInset * 2, btnH - rulesInset * 2);
-      ctx.strokeStyle = C.success;
-      ctx.strokeRect(x + rulesInset, rulesY + rulesInset, btnW - rulesInset * 2, btnH - rulesInset * 2);
-      ctx.fillStyle = C.success;
+      ctx.fillStyle = '#f0f0f0';
+      this.drawRoundedRect(x + rulesInset, rulesY + rulesInset, btnW - rulesInset * 2, btnH - rulesInset * 2, 28);
+      ctx.fill();
     } else {
-      ctx.fillStyle = C.card;
-      ctx.fillRect(x, rulesY, btnW, btnH);
-      ctx.strokeStyle = C.success;
-      ctx.strokeRect(x, rulesY, btnW, btnH);
-      ctx.fillStyle = C.success;
+      // 半透明白底增强文字可读性
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+      this.drawRoundedRect(x, rulesY, btnW, btnH, 28);
+      ctx.fill();
     }
-    ctx.font = '20px sans-serif';
+    // 描边
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = C.textSub;
+    this.drawRoundedRect(x + rulesInset, rulesY + rulesInset, btnW - rulesInset * 2, btnH - rulesInset * 2, 28);
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.fillStyle = C.text;
+    ctx.font = '18px sans-serif';
     ctx.fillText('游戏规则', x + btnW / 2, rulesY + btnH / 2);
     this.hitRegions.btnRules = { x, y: rulesY, w: btnW, h: btnH };
   }
