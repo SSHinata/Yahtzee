@@ -109,21 +109,22 @@ export default class Renderer {
       modalCancel: null, // {x, y, w, h}
       modalConfirm: null, // {x, y, w, h}
       btnStartGame: null, // {x, y, w, h}
-      btnRules: null // {x, y, w, h}
+      btnRules: null, // {x, y, w, h}
+      debugPanel: null // {x, y, w, h}
     };
     this.pressed = null;
   }
 
-  render(screen, state, bgImage, paperBgImage, ui, animState) {
+  render(screen, state, bgImage, paperBgImage, ui, animState, debug) {
     if (screen === 'menu') {
-      this.renderMenu(bgImage, paperBgImage);
+      this.renderMenu(bgImage, paperBgImage, debug);
       return;
     }
     if (screen === 'rules') {
-      this.renderRules(bgImage); // 传入背景图
+      this.renderRules(bgImage, debug); // 传入背景图
       return;
     }
-    this.renderGame(state, bgImage, paperBgImage, ui, animState);
+    this.renderGame(state, bgImage, paperBgImage, ui, animState, debug);
   }
 
   resetHitRegions() {
@@ -139,6 +140,7 @@ export default class Renderer {
     this.hitRegions.btnStartGame = null;
     this.hitRegions.btnRules = null;
     this.hitRegions.btnStartGameRule = null;
+    this.hitRegions.debugPanel = null;
   }
 
   drawConfirmBackToMenuModal() {
@@ -310,31 +312,15 @@ export default class Renderer {
     ctx.shadowOffsetY = 0;
   }
 
-  renderMenu(bgImage, paperBgImage) {
+  renderMenu(bgImage, paperBgImage, debug) {
     const ctx = this.ctx;
     const C = this.COLORS;
     this.resetHitRegions();
 
     // 1. 绘制背景图或纯色兜底
     if (bgImage) {
-      // 保持比例拉伸填满
-      // 简单做法：cover 模式
-      const imgRatio = bgImage.width / bgImage.height;
-      const screenRatio = this.width / this.height;
-      let sw, sh, sx, sy;
-      
-      if (screenRatio > imgRatio) {
-        sw = bgImage.width;
-        sh = bgImage.width / screenRatio;
-        sx = 0;
-        sy = (bgImage.height - sh) / 2;
-      } else {
-        sh = bgImage.height;
-        sw = bgImage.height * screenRatio;
-        sx = (bgImage.width - sw) / 2;
-        sy = 0;
-      }
-      ctx.drawImage(bgImage, sx, sy, sw, sh, 0, 0, this.width, this.height);
+      // 使用 image-layer 绘制背景，避免真机 background-image WebP 渲染差异
+      this.drawImageCover(bgImage, 0, 0, this.width, this.height, debug, 'bg');
     } else {
       ctx.fillStyle = C.bg;
       ctx.fillRect(0, 0, this.width, this.height);
@@ -342,8 +328,9 @@ export default class Renderer {
 
     // 1.5 绘制中景 (paperBg1)
     if (paperBgImage) {
-      // 宽度设定为屏幕宽度的 85%
-      const pW = this.width * 0.85;
+      // 中景必须用 image 绘制，透明 WebP 在真机更稳定
+      const scale = debug && debug.paper && debug.paper.renderScale ? debug.paper.renderScale : 1;
+      const pW = this.width * 0.85 * scale;
       const pH = pW * (paperBgImage.height / paperBgImage.width);
       const pX = (this.width - pW) / 2;
       // 垂直居中
@@ -357,7 +344,19 @@ export default class Renderer {
       ctx.shadowOffsetY = 5;
       
       ctx.drawImage(paperBgImage, pX, pY, pW, pH);
+      this.updateRenderDebug(debug, 'paper', { x: pX, y: pY, w: pW, h: pH });
       ctx.restore();
+    } else if (debug && debug.paper && debug.paper.fallback && debug.paper.fallback.placeholder) {
+      const scale = debug.paper.renderScale || 1;
+      const pW = this.width * 0.85 * scale;
+      const pH = pW * 0.6;
+      const pX = (this.width - pW) / 2;
+      const pY = (this.height - pH) / 2;
+      ctx.save();
+      ctx.globalAlpha = 0;
+      ctx.fillRect(pX, pY, pW, pH);
+      ctx.restore();
+      this.updateRenderDebug(debug, 'paper', { x: pX, y: pY, w: pW, h: pH, placeholder: true });
     }
 
     // 2. 标题区（卡片化）
@@ -446,31 +445,18 @@ export default class Renderer {
     ctx.font = '18px sans-serif';
     ctx.fillText('游戏规则', x + btnW / 2, rulesY + btnH / 2);
     this.hitRegions.btnRules = { x, y: rulesY, w: btnW, h: btnH };
+
+    this.renderDebugPanel(debug);
   }
 
-  renderRules(bgImage) {
+  renderRules(bgImage, debug) {
     const ctx = this.ctx;
     const C = this.COLORS;
     this.resetHitRegions();
 
     // 1. 背景统一（使用主页背景或兜底色）
     if (bgImage) {
-      const imgRatio = bgImage.width / bgImage.height;
-      const screenRatio = this.width / this.height;
-      let sw, sh, sx, sy;
-      
-      if (screenRatio > imgRatio) {
-        sw = bgImage.width;
-        sh = bgImage.width / screenRatio;
-        sx = 0;
-        sy = (bgImage.height - sh) / 2;
-      } else {
-        sh = bgImage.height;
-        sw = bgImage.height * screenRatio;
-        sx = (bgImage.width - sw) / 2;
-        sy = 0;
-      }
-      ctx.drawImage(bgImage, sx, sy, sw, sh, 0, 0, this.width, this.height);
+      this.drawImageCover(bgImage, 0, 0, this.width, this.height, debug, 'bg');
     } else {
       ctx.fillStyle = C.bg;
       ctx.fillRect(0, 0, this.width, this.height);
@@ -695,6 +681,8 @@ export default class Renderer {
     ctx.fillText('我知道了，开始游戏', this.width / 2, btnY + btnH / 2);
     
     this.hitRegions.btnStartGameRule = { x: cardX, y: btnY, w: cardW, h: btnH };
+
+    this.renderDebugPanel(debug);
   }
 
   drawStatusCard(state) {
@@ -1171,30 +1159,16 @@ export default class Renderer {
     ctx.fillText(`总分: ${totalScore}`, cardX + cardW - 20, cardY + 20);
   }
 
-  renderGame(state, bgImage, paperBgImage, ui, animState) {
+  renderGame(state, bgImage, paperBgImage, ui, animState, debug) {
     const ctx = this.ctx;
     const L = this.LAYOUT;
     const C = this.COLORS;
     this.resetHitRegions();
 
     // 1. 背景绘制 (与 Menu/Rules 统一逻辑)
+    // 层级结构：背景层(image) -> 中景装饰(image) -> UI 内容层
     if (bgImage) {
-      const imgRatio = bgImage.width / bgImage.height;
-      const screenRatio = this.width / this.height;
-      let sw, sh, sx, sy;
-      
-      if (screenRatio > imgRatio) {
-        sw = bgImage.width;
-        sh = bgImage.width / screenRatio;
-        sx = 0;
-        sy = (bgImage.height - sh) / 2;
-      } else {
-        sh = bgImage.height;
-        sw = bgImage.height * screenRatio;
-        sx = (bgImage.width - sw) / 2;
-        sy = 0;
-      }
-      ctx.drawImage(bgImage, sx, sy, sw, sh, 0, 0, this.width, this.height);
+      this.drawImageCover(bgImage, 0, 0, this.width, this.height, debug, 'bg');
     } else {
       ctx.fillStyle = C.bg;
       ctx.fillRect(0, 0, this.width, this.height);
@@ -1202,8 +1176,9 @@ export default class Renderer {
 
     // 1.5 中景装饰 (如果存在)
     if (paperBgImage) {
-      // 宽度设定为屏幕宽度的 90%
-      const pW = this.width * 0.9;
+      // 宽度设定为屏幕宽度的 90%，必要时缩小渲染降低解码压力
+      const scale = debug && debug.paper && debug.paper.renderScale ? debug.paper.renderScale : 1;
+      const pW = this.width * 0.9 * scale;
       const pH = pW * (paperBgImage.height / paperBgImage.width);
       const pX = (this.width - pW) / 2;
       // 垂直居中偏上一点
@@ -1213,6 +1188,18 @@ export default class Renderer {
       ctx.globalAlpha = 0.4; // 较淡，作为氛围背景
       ctx.drawImage(paperBgImage, pX, pY, pW, pH);
       ctx.restore();
+      this.updateRenderDebug(debug, 'paper', { x: pX, y: pY, w: pW, h: pH });
+    } else if (debug && debug.paper && debug.paper.fallback && debug.paper.fallback.placeholder) {
+      const scale = debug.paper.renderScale || 1;
+      const pW = this.width * 0.9 * scale;
+      const pH = pW * 0.6;
+      const pX = (this.width - pW) / 2;
+      const pY = (this.height - pH) / 2 - 20;
+      ctx.save();
+      ctx.globalAlpha = 0;
+      ctx.fillRect(pX, pY, pW, pH);
+      ctx.restore();
+      this.updateRenderDebug(debug, 'paper', { x: pX, y: pY, w: pW, h: pH, placeholder: true });
     }
     
     // 2. 绘制三段式布局
@@ -1233,6 +1220,97 @@ export default class Renderer {
 
     if (ui && ui.confirmBackToMenuOpen) {
       this.drawConfirmBackToMenuModal();
+    }
+
+    this.renderDebugPanel(debug);
+  }
+
+  drawImageCover(image, x, y, w, h, debug, key) {
+    const imgRatio = image.width / image.height;
+    const screenRatio = w / h;
+
+    let sx = 0, sy = 0, sw = image.width, sh = image.height;
+    if (screenRatio > imgRatio) {
+      sw = image.width;
+      sh = image.width / screenRatio;
+      sx = 0;
+      sy = (image.height - sh) / 2;
+    } else {
+      sh = image.height;
+      sw = image.height * screenRatio;
+      sx = (image.width - sw) / 2;
+      sy = 0;
+    }
+
+    this.ctx.drawImage(image, sx, sy, sw, sh, x, y, w, h);
+    this.updateRenderDebug(debug, key, { x, y, w, h, sx, sy, sw, sh });
+  }
+
+  updateRenderDebug(debug, key, payload) {
+    if (!debug || !debug.enabled || !debug[key]) return;
+    debug[key].render = {
+      time: Date.now(),
+      ...payload
+    };
+  }
+
+  renderDebugPanel(debug) {
+    if (!debug || !debug.enabled) return;
+    const ctx = this.ctx;
+    const padding = 10;
+    const panelW = debug.panelExpanded ? 220 : 110;
+    const panelH = debug.panelExpanded ? 190 : 32;
+    const x = this.width - panelW - padding;
+    const y = padding;
+
+    ctx.save();
+    ctx.globalAlpha = 0.88;
+    ctx.fillStyle = '#111827';
+    this.drawRoundedRect(x, y, panelW, panelH, 8);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.fillStyle = '#F9FAFB';
+    ctx.font = '12px sans-serif';
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    ctx.fillText(debug.panelExpanded ? '诊断面板 (点击收起)' : '诊断 (点击展开)', x + 10, y + 8);
+
+    if (debug.panelExpanded) {
+      const lineY = y + 30;
+      const lineGap = 18;
+      const bgStatus = debug.bg.loaded ? '成功' : '失败';
+      const paperStatus = debug.paper.loaded ? '成功' : '失败';
+      ctx.fillText(`背景 WebP: ${bgStatus}`, x + 10, lineY);
+      ctx.fillText(`中景 WebP: ${paperStatus}`, x + 10, lineY + lineGap);
+      const systemText = `${debug.systemInfo.system || ''} ${debug.systemInfo.model || ''}`.trim();
+      ctx.fillText(`设备: ${systemText || '未知'}`, x + 10, lineY + lineGap * 2);
+      const versionText = `微信: ${debug.systemInfo.version || '未知'}`;
+      ctx.fillText(versionText, x + 10, lineY + lineGap * 3);
+      ctx.fillText(`渲染策略: ${debug.renderStrategy}`, x + 10, lineY + lineGap * 4);
+      const bgError = debug.bg.error ? this.formatDebugError(debug.bg.error) : null;
+      const paperError = debug.paper.error ? this.formatDebugError(debug.paper.error) : null;
+      if (bgError) {
+        ctx.fillStyle = '#FCA5A5';
+        ctx.fillText(`背景错误: ${bgError}`, x + 10, lineY + lineGap * 5);
+      }
+      if (paperError) {
+        ctx.fillStyle = '#FCA5A5';
+        ctx.fillText(`中景错误: ${paperError}`, x + 10, lineY + lineGap * 6);
+      }
+    }
+
+    this.hitRegions.debugPanel = { x, y, w: panelW, h: panelH };
+  }
+
+  formatDebugError(error) {
+    if (!error) return '';
+    if (typeof error === 'string') return error.slice(0, 24);
+    if (error.errMsg) return String(error.errMsg).slice(0, 24);
+    try {
+      return JSON.stringify(error).slice(0, 24);
+    } catch (e) {
+      return '未知错误';
     }
   }
   
