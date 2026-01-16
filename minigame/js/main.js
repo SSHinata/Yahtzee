@@ -54,10 +54,7 @@ export default class Main {
       this.bgImage = wx.createImage();
       this.bgImageLoaded = false;
       this.bgImageSources = [
-        'resources/img/indexBg1.webp',
-        '/resources/img/indexBg1.webp',
-        'minigame/resources/img/indexBg1.webp',
-        '/minigame/resources/img/indexBg1.webp',
+        'resources/img/indexBg1.webp'
       ];
       this.bgImageSourceIndex = 0;
 
@@ -87,10 +84,7 @@ export default class Main {
       this.paperBgImage = wx.createImage();
       this.paperBgImageLoaded = false;
       this.paperBgImageSources = [
-        'resources/img/paperBg1.webp',
-        '/resources/img/paperBg1.webp',
-        'minigame/resources/img/paperBg1.webp',
-        '/minigame/resources/img/paperBg1.webp',
+        'resources/img/paperBg1.webp'
       ];
       this.paperBgImageSourceIndex = 0;
 
