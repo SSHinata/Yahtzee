@@ -48,24 +48,36 @@ export default class Main {
 
       // 预加载背景图片
       this.bgImage = wx.createImage();
-      // 错误日志显示路径被解析为 /Users/pitaya/workspace/Yahtzee/minigame/minigame/resources/img/indexBg1.png
-      // 说明小游戏根目录已经是 minigame/，我们不应该再加 minigame/ 前缀
-      // 直接使用 resources/img/indexBg1.png
-      this.bgImage.src = 'resources/img/indexBg1.png';
-      
       this.bgImageLoaded = false;
+      this.bgImageSources = [
+        'resources/img/indexBg1.png',
+        '/resources/img/indexBg1.png',
+        'minigame/resources/img/indexBg1.png',
+        '/minigame/resources/img/indexBg1.png',
+      ];
+      this.bgImageSourceIndex = 0;
+
+      const loadNextBgImage = () => {
+        if (this.bgImageSourceIndex >= this.bgImageSources.length) {
+          console.error('Background image load failed for all known paths.');
+          return;
+        }
+        const nextSrc = this.bgImageSources[this.bgImageSourceIndex];
+        this.bgImageSourceIndex += 1;
+        console.log('Loading background image:', nextSrc);
+        this.bgImage.src = nextSrc;
+      };
+
       this.bgImage.onload = () => {
         console.log('Background image loaded successfully');
         this.bgImageLoaded = true;
       };
       this.bgImage.onerror = (e) => {
         console.error('Background image load failed:', e);
-        // 如果失败，尝试加 / 前缀（根路径）
-        if (this.bgImage.src.indexOf('/') !== 0) {
-           console.log('Retrying with / prefix...');
-           this.bgImage.src = '/resources/img/indexBg1.png';
-        }
+        loadNextBgImage();
       };
+
+      loadNextBgImage();
       
       // 初始化输入处理
       this.inputHandler = new InputHandler(this);
