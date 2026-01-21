@@ -71,7 +71,8 @@ export default class Main {
           height: null,
           error: null,
           info: null,
-          render: null
+          render: null,
+          base64Tried: false
         },
         paper: {
           src: null,
@@ -83,6 +84,7 @@ export default class Main {
           info: null,
           render: null,
           renderScale: 1,
+          base64Tried: false,
           fallback: {
             delayedRetry: false,
             scaledRender: false,
@@ -143,6 +145,7 @@ export default class Main {
         if (this.debug.enabled) {
           this.debug.bg.error = e;
         }
+        this.tryLoadImageWithBase64('bg', this.bgImage, this.debug.bg.src);
         loadNextBgImage();
       };
 
@@ -201,6 +204,7 @@ export default class Main {
           this.debug.paper.error = e;
           this.debug.paper.loaded = false;
         }
+        this.tryLoadImageWithBase64('paper', this.paperBgImage, this.debug.paper.src);
         this.retryPaperBgImageWithFallback();
         loadNextPaperBgImage();
       };
@@ -453,6 +457,31 @@ export default class Main {
       chunks.push(text.slice(i, i + size));
     }
     return chunks;
+  }
+
+  tryLoadImageWithBase64(type, image, src) {
+    const target = type === 'paper' ? this.debug.paper : this.debug.bg;
+    if (!this.debug.enabled || !src || target.base64Tried) return;
+    if (!wx.getFileSystemManager || !wx.arrayBufferToBase64) {
+      console.warn('[Fallback] Base64 load not available');
+      return;
+    }
+    target.base64Tried = true;
+    const fs = wx.getFileSystemManager();
+    fs.readFile({
+      filePath: src,
+      success: (res) => {
+        const buffer = res.data instanceof ArrayBuffer ? res.data : res.data.buffer;
+        const base64 = wx.arrayBufferToBase64(buffer);
+        const dataUrl = `data:image/webp;base64,${base64}`;
+        console.info(`[Fallback] Base64 reload for ${type} WebP`);
+        image.src = dataUrl;
+      },
+      fail: (err) => {
+        console.warn('[Fallback] Base64 load failed', err);
+        target.error = err;
+      }
+    });
   }
 
   probeImageInfo(type, src) {
