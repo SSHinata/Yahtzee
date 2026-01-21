@@ -72,7 +72,8 @@ export default class Main {
           error: null,
           info: null,
           render: null,
-          base64Tried: false
+          base64Tried: false,
+          fileCopyTried: false
         },
         paper: {
           src: null,
@@ -85,6 +86,7 @@ export default class Main {
           render: null,
           renderScale: 1,
           base64Tried: false,
+          fileCopyTried: false,
           fallback: {
             delayedRetry: false,
             scaledRender: false,
@@ -145,7 +147,7 @@ export default class Main {
         if (this.debug.enabled) {
           this.debug.bg.error = e;
         }
-        this.tryLoadImageWithBase64('bg', this.bgImage, this.debug.bg.src);
+        this.tryLoadImageWithFallback('bg', this.bgImage, this.debug.bg.src);
         loadNextBgImage();
       };
 
@@ -204,7 +206,7 @@ export default class Main {
           this.debug.paper.error = e;
           this.debug.paper.loaded = false;
         }
-        this.tryLoadImageWithBase64('paper', this.paperBgImage, this.debug.paper.src);
+        this.tryLoadImageWithFallback('paper', this.paperBgImage, this.debug.paper.src);
         this.retryPaperBgImageWithFallback();
         loadNextPaperBgImage();
       };
@@ -459,6 +461,36 @@ export default class Main {
     return chunks;
   }
 
+  tryLoadImageWithFallback(type, image, src) {
+    const target = type === 'paper' ? this.debug.paper : this.debug.bg;
+    if (!this.debug.enabled || !src) return;
+    if (!wx.getFileSystemManager) {
+      console.warn('[Fallback] File system manager not available');
+      return;
+    }
+    const fs = wx.getFileSystemManager();
+    const destPath = `${wx.env.USER_DATA_PATH}/${type}-webp-fallback.webp`;
+
+    if (!target.fileCopyTried) {
+      target.fileCopyTried = true;
+      fs.copyFile({
+        srcPath: src,
+        destPath,
+        success: () => {
+          console.info(`[Fallback] Copied ${type} WebP to user data path`);
+          image.src = destPath;
+        },
+        fail: (err) => {
+          console.warn('[Fallback] Copy file failed', err);
+          this.tryLoadImageWithBase64(type, image, src);
+        }
+      });
+      return;
+    }
+
+    this.tryLoadImageWithBase64(type, image, src);
+  }
+
   tryLoadImageWithBase64(type, image, src) {
     const target = type === 'paper' ? this.debug.paper : this.debug.bg;
     if (!this.debug.enabled || !src || target.base64Tried) return;
@@ -470,9 +502,11 @@ export default class Main {
     const fs = wx.getFileSystemManager();
     fs.readFile({
       filePath: src,
+      encoding: 'base64',
       success: (res) => {
-        const buffer = res.data instanceof ArrayBuffer ? res.data : res.data.buffer;
-        const base64 = wx.arrayBufferToBase64(buffer);
+        const base64 = typeof res.data === 'string'
+          ? res.data
+          : wx.arrayBufferToBase64(res.data);
         const dataUrl = `data:image/webp;base64,${base64}`;
         console.info(`[Fallback] Base64 reload for ${type} WebP`);
         image.src = dataUrl;
