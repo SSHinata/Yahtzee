@@ -88,6 +88,10 @@ export default class Main {
             scaledRender: false,
             placeholder: true
           }
+        },
+        copy: {
+          chunks: null,
+          index: 0
         }
       };
 
@@ -361,6 +365,58 @@ export default class Main {
       console.warn('[Debug] wx.setClipboardData not available');
       return;
     }
+    if (this.debug.copy.chunks && this.debug.copy.index < this.debug.copy.chunks.length) {
+      this.copyDebugChunk(this.debug.copy.index);
+      return;
+    }
+
+    const text = this.buildDebugText();
+    wx.setClipboardData({
+      data: text,
+      success: () => {
+        console.info('[Debug] Diagnosis copied to clipboard');
+        this.debug.copy.chunks = null;
+        this.debug.copy.index = 0;
+        wx.showToast({ title: '诊断已复制', icon: 'none' });
+      },
+      fail: (err) => {
+        console.warn('[Debug] Failed to copy diagnosis, try chunking', err);
+        this.debug.copy.chunks = this.splitDebugText(text, 1500);
+        this.debug.copy.index = 0;
+        if (this.debug.copy.chunks.length > 0) {
+          this.copyDebugChunk(0);
+        } else {
+          wx.showToast({ title: '复制失败', icon: 'none' });
+        }
+      }
+    });
+  }
+
+  copyDebugChunk(index) {
+    const chunks = this.debug.copy.chunks || [];
+    if (!wx.setClipboardData || chunks.length === 0) return;
+    const total = chunks.length;
+    const prefix = `Yahtzee WebP 诊断分段 ${index + 1}/${total}\n`;
+    const data = prefix + chunks[index];
+    wx.setClipboardData({
+      data,
+      success: () => {
+        this.debug.copy.index = index + 1;
+        const done = this.debug.copy.index >= total;
+        wx.showToast({ title: done ? '诊断已复制' : `已复制第${index + 1}段`, icon: 'none' });
+        if (done) {
+          this.debug.copy.chunks = null;
+          this.debug.copy.index = 0;
+        }
+      },
+      fail: (err) => {
+        console.warn('[Debug] Failed to copy diagnosis chunk', err);
+        wx.showToast({ title: '复制失败', icon: 'none' });
+      }
+    });
+  }
+
+  buildDebugText() {
     const payload = {
       system: this.debug.systemInfo,
       renderStrategy: this.debug.renderStrategy,
@@ -387,18 +443,16 @@ export default class Main {
         fallback: this.debug.paper.fallback
       }
     };
-    const text = `Yahtzee WebP 诊断\n${JSON.stringify(payload, null, 2)}`;
-    wx.setClipboardData({
-      data: text,
-      success: () => {
-        console.info('[Debug] Diagnosis copied to clipboard');
-        wx.showToast({ title: '诊断已复制', icon: 'none' });
-      },
-      fail: (err) => {
-        console.warn('[Debug] Failed to copy diagnosis', err);
-        wx.showToast({ title: '复制失败', icon: 'none' });
-      }
-    });
+    return `Yahtzee WebP 诊断\n${JSON.stringify(payload, null, 2)}`;
+  }
+
+  splitDebugText(text, size) {
+    const chunks = [];
+    if (!text) return chunks;
+    for (let i = 0; i < text.length; i += size) {
+      chunks.push(text.slice(i, i + size));
+    }
+    return chunks;
   }
 
   probeImageInfo(type, src) {

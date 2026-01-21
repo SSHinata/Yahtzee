@@ -1315,7 +1315,10 @@ export default class Renderer {
       ctx.font = '12px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('复制诊断', copyX + copyW / 2, copyY + copyH / 2);
+      const copyLabel = debug.copy && debug.copy.chunks
+        ? `复制(${debug.copy.index + 1}/${debug.copy.chunks.length})`
+        : '复制诊断';
+      ctx.fillText(copyLabel, copyX + copyW / 2, copyY + copyH / 2);
       this.hitRegions.debugCopy = { x: copyX, y: copyY, w: copyW, h: copyH };
     }
 
