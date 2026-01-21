@@ -110,7 +110,8 @@ export default class Renderer {
       modalConfirm: null, // {x, y, w, h}
       btnStartGame: null, // {x, y, w, h}
       btnRules: null, // {x, y, w, h}
-      debugPanel: null // {x, y, w, h}
+      debugPanel: null, // {x, y, w, h}
+      debugCopy: null // {x, y, w, h}
     };
     this.pressed = null;
   }
@@ -141,6 +142,7 @@ export default class Renderer {
     this.hitRegions.btnRules = null;
     this.hitRegions.btnStartGameRule = null;
     this.hitRegions.debugPanel = null;
+    this.hitRegions.debugCopy = null;
   }
 
   drawConfirmBackToMenuModal() {
@@ -1259,7 +1261,7 @@ export default class Renderer {
     const ctx = this.ctx;
     const padding = 10;
     const panelW = debug.panelExpanded ? 220 : 110;
-    const panelH = debug.panelExpanded ? 190 : 32;
+    const panelH = debug.panelExpanded ? 214 : 32;
     const x = this.width - panelW - padding;
     const y = padding;
 
@@ -1298,6 +1300,23 @@ export default class Renderer {
         ctx.fillStyle = '#FCA5A5';
         ctx.fillText(`中景错误: ${paperError}`, x + 10, lineY + lineGap * 6);
       }
+
+      // 复制按钮：将完整诊断信息复制到剪贴板（真机可粘贴）
+      const copyW = 72;
+      const copyH = 22;
+      const copyX = x + panelW - copyW - 10;
+      const copyY = y + panelH - copyH - 10;
+      ctx.save();
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+      this.drawRoundedRect(copyX, copyY, copyW, copyH, 6);
+      ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = '#F9FAFB';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('复制诊断', copyX + copyW / 2, copyY + copyH / 2);
+      this.hitRegions.debugCopy = { x: copyX, y: copyY, w: copyW, h: copyH };
     }
 
     this.hitRegions.debugPanel = { x, y, w: panelW, h: panelH };

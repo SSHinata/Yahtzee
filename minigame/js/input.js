@@ -98,6 +98,10 @@ export default class InputHandler {
     const regions = this.main.renderer.hitRegions;
     const screen = this.main.screen;
 
+    if (regions.debugCopy && this.isHit(x, y, regions.debugCopy)) {
+      this.main.copyDebugInfo();
+      return;
+    }
     if (regions.debugPanel && this.isHit(x, y, regions.debugPanel)) {
       this.main.toggleDebugPanel();
       return;

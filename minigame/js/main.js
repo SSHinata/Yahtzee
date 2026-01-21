@@ -355,6 +355,52 @@ export default class Main {
     this.debug.panelExpanded = !this.debug.panelExpanded;
   }
 
+  copyDebugInfo() {
+    if (!this.debug.enabled) return;
+    if (!wx.setClipboardData) {
+      console.warn('[Debug] wx.setClipboardData not available');
+      return;
+    }
+    const payload = {
+      system: this.debug.systemInfo,
+      renderStrategy: this.debug.renderStrategy,
+      bg: {
+        src: this.debug.bg.src,
+        loaded: this.debug.bg.loaded,
+        loadMs: this.debug.bg.loadMs,
+        width: this.debug.bg.width,
+        height: this.debug.bg.height,
+        error: this.debug.bg.error,
+        info: this.debug.bg.info,
+        render: this.debug.bg.render
+      },
+      paper: {
+        src: this.debug.paper.src,
+        loaded: this.debug.paper.loaded,
+        loadMs: this.debug.paper.loadMs,
+        width: this.debug.paper.width,
+        height: this.debug.paper.height,
+        error: this.debug.paper.error,
+        info: this.debug.paper.info,
+        render: this.debug.paper.render,
+        renderScale: this.debug.paper.renderScale,
+        fallback: this.debug.paper.fallback
+      }
+    };
+    const text = `Yahtzee WebP 诊断\n${JSON.stringify(payload, null, 2)}`;
+    wx.setClipboardData({
+      data: text,
+      success: () => {
+        console.info('[Debug] Diagnosis copied to clipboard');
+        wx.showToast({ title: '诊断已复制', icon: 'none' });
+      },
+      fail: (err) => {
+        console.warn('[Debug] Failed to copy diagnosis', err);
+        wx.showToast({ title: '复制失败', icon: 'none' });
+      }
+    });
+  }
+
   probeImageInfo(type, src) {
     const label = type === 'paper' ? 'Paper' : 'Background';
     const start = Date.now();
