@@ -3,6 +3,8 @@ import { Phase } from '../core/engine/rules';
 import Renderer from './render';
 import InputHandler from './input';
 
+const DEBUG = true;
+
 /**
  * 游戏主入口
  */
@@ -50,6 +52,53 @@ export default class Main {
       // 初始化渲染器
       this.renderer = new Renderer(this.ctx, this.logicWidth, this.logicHeight, safeAreaTop);
 
+      // 诊断信息（用于真机排查 WebP 加载/渲染问题）
+      this.debug = {
+        enabled: DEBUG,
+        panelExpanded: false,
+        systemInfo: {
+          system: info.system,
+          version: info.version,
+          platform: info.platform,
+          model: info.model
+        },
+        renderStrategy: 'image-layer (canvas)',
+        bg: {
+          src: null,
+          loaded: false,
+          loadMs: null,
+          width: null,
+          height: null,
+          error: null,
+          info: null,
+          render: null,
+          base64Tried: false,
+          fileCopyTried: false
+        },
+        paper: {
+          src: null,
+          loaded: false,
+          loadMs: null,
+          width: null,
+          height: null,
+          error: null,
+          info: null,
+          render: null,
+          renderScale: 1,
+          base64Tried: false,
+          fileCopyTried: false,
+          fallback: {
+            delayedRetry: false,
+            scaledRender: false,
+            placeholder: true
+          }
+        },
+        copy: {
+          chunks: null,
+          index: 0
+        }
+      };
+
       // 预加载背景图片
       this.bgImage = wx.createImage();
       this.bgImageLoaded = false;
@@ -66,15 +115,39 @@ export default class Main {
         const nextSrc = this.bgImageSources[this.bgImageSourceIndex];
         this.bgImageSourceIndex += 1;
         // console.log('Loading background image:', nextSrc);
+        if (this.debug.enabled) {
+          this.debug.bg.src = nextSrc;
+          this.debug.bg.error = null;
+          this.debug.bg.loaded = false;
+          this.debug.bg.loadMs = null;
+        }
+        this.probeImageInfo('bg', nextSrc);
+        this.bgImageLoadStart = Date.now();
         this.bgImage.src = nextSrc;
       };
 
       this.bgImage.onload = () => {
         // console.log('Background image loaded successfully');
         this.bgImageLoaded = true;
+        console.info('Background image loaded', {
+          src: this.debug.bg.src,
+          width: this.bgImage.width,
+          height: this.bgImage.height,
+          cost: Date.now() - this.bgImageLoadStart
+        });
+        if (this.debug.enabled) {
+          this.debug.bg.loaded = true;
+          this.debug.bg.loadMs = Date.now() - this.bgImageLoadStart;
+          this.debug.bg.width = this.bgImage.width;
+          this.debug.bg.height = this.bgImage.height;
+        }
       };
       this.bgImage.onerror = (e) => {
         console.error('Background image load failed:', e);
+        if (this.debug.enabled) {
+          this.debug.bg.error = e;
+        }
+        this.tryLoadImageWithFallback('bg', this.bgImage, this.debug.bg.src);
         loadNextBgImage();
       };
 
@@ -83,6 +156,7 @@ export default class Main {
       // 预加载中景图片 (paperBg1)
       this.paperBgImage = wx.createImage();
       this.paperBgImageLoaded = false;
+      this.paperBgRenderScale = 1;
       this.paperBgImageSources = [
         'resources/img/paperBg1.webp'
       ];
@@ -96,15 +170,44 @@ export default class Main {
         const nextSrc = this.paperBgImageSources[this.paperBgImageSourceIndex];
         this.paperBgImageSourceIndex += 1;
         // console.log('Loading paper background image:', nextSrc);
+        if (this.debug.enabled) {
+          this.debug.paper.src = nextSrc;
+          this.debug.paper.error = null;
+          this.debug.paper.loaded = false;
+          this.debug.paper.loadMs = null;
+          this.debug.paper.fallback.placeholder = true;
+        }
+        this.probeImageInfo('paper', nextSrc);
+        this.paperBgImageLoadStart = Date.now();
         this.paperBgImage.src = nextSrc;
       };
 
       this.paperBgImage.onload = () => {
         // console.log('Paper background image loaded successfully');
         this.paperBgImageLoaded = true;
+        console.info('Paper image loaded', {
+          src: this.debug.paper.src,
+          width: this.paperBgImage.width,
+          height: this.paperBgImage.height,
+          cost: Date.now() - this.paperBgImageLoadStart
+        });
+        if (this.debug.enabled) {
+          this.debug.paper.loaded = true;
+          this.debug.paper.loadMs = Date.now() - this.paperBgImageLoadStart;
+          this.debug.paper.width = this.paperBgImage.width;
+          this.debug.paper.height = this.paperBgImage.height;
+          this.debug.paper.fallback.placeholder = false;
+          this.debug.paper.renderScale = this.paperBgRenderScale;
+        }
       };
       this.paperBgImage.onerror = (e) => {
         console.error('Paper background image load failed:', e);
+        if (this.debug.enabled) {
+          this.debug.paper.error = e;
+          this.debug.paper.loaded = false;
+        }
+        this.tryLoadImageWithFallback('paper', this.paperBgImage, this.debug.paper.src);
+        this.retryPaperBgImageWithFallback();
         loadNextPaperBgImage();
       };
 
@@ -251,9 +354,230 @@ export default class Main {
         this.bgImageLoaded ? this.bgImage : null,
         this.paperBgImageLoaded ? this.paperBgImage : null,
         this.ui,
-        this.animState
+        this.animState,
+        this.debug
       );
     }
+  }
+
+  toggleDebugPanel() {
+    if (!this.debug.enabled) return;
+    this.debug.panelExpanded = !this.debug.panelExpanded;
+  }
+
+  copyDebugInfo() {
+    if (!this.debug.enabled) return;
+    if (!wx.setClipboardData) {
+      console.warn('[Debug] wx.setClipboardData not available');
+      return;
+    }
+    if (this.debug.copy.chunks && this.debug.copy.index < this.debug.copy.chunks.length) {
+      this.copyDebugChunk(this.debug.copy.index);
+      return;
+    }
+
+    const text = this.buildDebugText();
+    wx.setClipboardData({
+      data: text,
+      success: () => {
+        console.info('[Debug] Diagnosis copied to clipboard');
+        this.debug.copy.chunks = null;
+        this.debug.copy.index = 0;
+        wx.showToast({ title: '诊断已复制', icon: 'none' });
+      },
+      fail: (err) => {
+        console.warn('[Debug] Failed to copy diagnosis, try chunking', err);
+        this.debug.copy.chunks = this.splitDebugText(text, 1500);
+        this.debug.copy.index = 0;
+        if (this.debug.copy.chunks.length > 0) {
+          this.copyDebugChunk(0);
+        } else {
+          wx.showToast({ title: '复制失败', icon: 'none' });
+        }
+      }
+    });
+  }
+
+  copyDebugChunk(index) {
+    const chunks = this.debug.copy.chunks || [];
+    if (!wx.setClipboardData || chunks.length === 0) return;
+    const total = chunks.length;
+    const prefix = `Yahtzee WebP 诊断分段 ${index + 1}/${total}\n`;
+    const data = prefix + chunks[index];
+    wx.setClipboardData({
+      data,
+      success: () => {
+        this.debug.copy.index = index + 1;
+        const done = this.debug.copy.index >= total;
+        wx.showToast({ title: done ? '诊断已复制' : `已复制第${index + 1}段`, icon: 'none' });
+        if (done) {
+          this.debug.copy.chunks = null;
+          this.debug.copy.index = 0;
+        }
+      },
+      fail: (err) => {
+        console.warn('[Debug] Failed to copy diagnosis chunk', err);
+        wx.showToast({ title: '复制失败', icon: 'none' });
+      }
+    });
+  }
+
+  buildDebugText() {
+    const payload = {
+      system: this.debug.systemInfo,
+      renderStrategy: this.debug.renderStrategy,
+      bg: {
+        src: this.debug.bg.src,
+        loaded: this.debug.bg.loaded,
+        loadMs: this.debug.bg.loadMs,
+        width: this.debug.bg.width,
+        height: this.debug.bg.height,
+        error: this.debug.bg.error,
+        info: this.debug.bg.info,
+        render: this.debug.bg.render
+      },
+      paper: {
+        src: this.debug.paper.src,
+        loaded: this.debug.paper.loaded,
+        loadMs: this.debug.paper.loadMs,
+        width: this.debug.paper.width,
+        height: this.debug.paper.height,
+        error: this.debug.paper.error,
+        info: this.debug.paper.info,
+        render: this.debug.paper.render,
+        renderScale: this.debug.paper.renderScale,
+        fallback: this.debug.paper.fallback
+      }
+    };
+    return `Yahtzee WebP 诊断\n${JSON.stringify(payload, null, 2)}`;
+  }
+
+  splitDebugText(text, size) {
+    const chunks = [];
+    if (!text) return chunks;
+    for (let i = 0; i < text.length; i += size) {
+      chunks.push(text.slice(i, i + size));
+    }
+    return chunks;
+  }
+
+  tryLoadImageWithFallback(type, image, src) {
+    const target = type === 'paper' ? this.debug.paper : this.debug.bg;
+    if (!this.debug.enabled || !src) return;
+    if (!wx.getFileSystemManager) {
+      console.warn('[Fallback] File system manager not available');
+      return;
+    }
+    const fs = wx.getFileSystemManager();
+    const destPath = `${wx.env.USER_DATA_PATH}/${type}-webp-fallback.webp`;
+
+    if (!target.fileCopyTried) {
+      target.fileCopyTried = true;
+      fs.copyFile({
+        srcPath: src,
+        destPath,
+        success: () => {
+          console.info(`[Fallback] Copied ${type} WebP to user data path`);
+          image.src = destPath;
+        },
+        fail: (err) => {
+          console.warn('[Fallback] Copy file failed', err);
+          this.tryLoadImageWithBase64(type, image, src);
+        }
+      });
+      return;
+    }
+
+    this.tryLoadImageWithBase64(type, image, src);
+  }
+
+  tryLoadImageWithBase64(type, image, src) {
+    const target = type === 'paper' ? this.debug.paper : this.debug.bg;
+    if (!this.debug.enabled || !src || target.base64Tried) return;
+    if (!wx.getFileSystemManager || !wx.arrayBufferToBase64) {
+      console.warn('[Fallback] Base64 load not available');
+      return;
+    }
+    target.base64Tried = true;
+    const fs = wx.getFileSystemManager();
+    fs.readFile({
+      filePath: src,
+      encoding: 'base64',
+      success: (res) => {
+        const base64 = typeof res.data === 'string'
+          ? res.data
+          : wx.arrayBufferToBase64(res.data);
+        const dataUrl = `data:image/webp;base64,${base64}`;
+        console.info(`[Fallback] Base64 reload for ${type} WebP`);
+        image.src = dataUrl;
+      },
+      fail: (err) => {
+        console.warn('[Fallback] Base64 load failed', err);
+        target.error = err;
+      }
+    });
+  }
+
+  probeImageInfo(type, src) {
+    const label = type === 'paper' ? 'Paper' : 'Background';
+    const start = Date.now();
+    if (!wx.getImageInfo) {
+      console.warn(`[Probe] ${label} wx.getImageInfo not available`);
+      if (this.debug.enabled) {
+        this.debug[type].info = { success: false, error: 'wx.getImageInfo not available' };
+      }
+      return;
+    }
+    wx.getImageInfo({
+      src,
+      success: (res) => {
+        const cost = Date.now() - start;
+        console.info(`[Probe] ${label} getImageInfo success`, res, `cost=${cost}ms`);
+        if (this.debug.enabled) {
+          this.debug[type].info = {
+            success: true,
+            width: res.width,
+            height: res.height,
+            path: res.path,
+            cost
+          };
+        }
+        // 某些真机上使用 info.path 重新加载可提升 WebP 兼容性
+        if (type === 'paper' && res.path && !this.paperBgImageLoaded) {
+          this.paperBgImage.src = res.path;
+        }
+        if (type === 'bg' && res.path && !this.bgImageLoaded) {
+          this.bgImage.src = res.path;
+        }
+      },
+      fail: (err) => {
+        const cost = Date.now() - start;
+        console.warn(`[Probe] ${label} getImageInfo fail`, err, `cost=${cost}ms`);
+        if (this.debug.enabled) {
+          this.debug[type].info = {
+            success: false,
+            error: err,
+            cost
+          };
+        }
+      }
+    });
+  }
+
+  retryPaperBgImageWithFallback() {
+    // 真机 WebP 解码失败时，尝试延迟加载 + 缩小显示策略
+    if (this.debug.enabled) {
+      this.debug.paper.fallback.delayedRetry = true;
+      this.debug.paper.fallback.scaledRender = true;
+    }
+    this.paperBgRenderScale = 0.9;
+    this.debug.paper.renderScale = this.paperBgRenderScale;
+    setTimeout(() => {
+      if (!this.paperBgImageLoaded && this.debug.paper.src) {
+        console.info('[Fallback] Retrying paper WebP load with delayed strategy');
+        this.paperBgImage.src = this.debug.paper.src;
+      }
+    }, 300);
   }
   
   // --- 暴露给 InputHandler 的动作接口 ---
