@@ -125,7 +125,10 @@ export default class Renderer {
       btnLeaderboardRestartSingle: null, // {x, y, w, h}
       btnLeaderboardBackToMenu: null, // {x, y, w, h}
       confirmClearCancel: null, // {x, y, w, h}
-      confirmClearConfirm: null // {x, y, w, h}
+      confirmClearConfirm: null, // {x, y, w, h}
+      btnScoreQuickRef: null, // {x, y, w, h}
+      quickRefBackdrop: null, // {x, y, w, h}
+      quickRefCard: null // {x, y, w, h}
     };
     this.pressed = null;
   }
@@ -172,6 +175,9 @@ export default class Renderer {
     this.hitRegions.btnLeaderboardBackToMenu = null;
     this.hitRegions.confirmClearCancel = null;
     this.hitRegions.confirmClearConfirm = null;
+    this.hitRegions.btnScoreQuickRef = null;
+    this.hitRegions.quickRefBackdrop = null;
+    this.hitRegions.quickRefCard = null;
     this.hitRegions.btnStartGameRule = null;
   }
 
@@ -527,6 +533,144 @@ export default class Renderer {
     }
 
     ctx.restore();
+  }
+
+  drawScoreQuickRefModal(ui) {
+    const ctx = this.ctx;
+    const C = this.COLORS;
+    const anim = ui && ui.quickRefAnim ? ui.quickRefAnim : null;
+    const maskAlpha = anim && typeof anim.maskAlpha === 'number' ? anim.maskAlpha : 0;
+    const cardAlpha = anim && typeof anim.cardAlpha === 'number' ? anim.cardAlpha : 0;
+    const cardScale = anim && typeof anim.cardScale === 'number' ? anim.cardScale : 1;
+
+    ctx.save();
+    ctx.fillStyle = `rgba(17, 24, 39, ${maskAlpha})`;
+    ctx.fillRect(0, 0, this.width, this.height);
+    ctx.restore();
+
+    this.hitRegions.quickRefBackdrop = { x: 0, y: 0, w: this.width, h: this.height };
+
+    const maxCardW = Math.min(420, this.width * 0.86);
+    const cardW = Math.max(260, this.width * 0.82, Math.min(maxCardW, this.width - 40));
+    const maxCardH = Math.floor(this.height * 0.7);
+    const lines = [
+      { type: 'title', text: '计分速查' },
+      { type: 'section', text: '数字区' },
+      { type: 'row', left: '一点', right: '所有 1 的点数之和' },
+      { type: 'row', left: '二点', right: '所有 2 的点数之和' },
+      { type: 'row', left: '三点', right: '所有 3 的点数之和' },
+      { type: 'row', left: '四点', right: '所有 4 的点数之和' },
+      { type: 'row', left: '五点', right: '所有 5 的点数之和' },
+      { type: 'row', left: '六点', right: '所有 6 的点数之和' },
+      { type: 'section', text: '组合区' },
+      { type: 'row', left: '三条', right: '≥ 3 相同 → 总和' },
+      { type: 'row', left: '四条', right: '≥ 4 相同 → 总和' },
+      { type: 'row', left: '葫芦', right: '3 + 2 → 固定 25 分' },
+      { type: 'row', left: '小顺', right: '4 连号 → 固定 30 分' },
+      { type: 'row', left: '大顺', right: '5 连号 → 固定 40 分' },
+      { type: 'row', left: '快艇', right: '5 相同 → 固定 50 分' },
+      { type: 'row', left: '全选', right: '任意 → 总和' }
+    ];
+
+    const paddingX = 24;
+    const paddingTop = 20;
+    const paddingBottom = 24;
+    const titleH = 40; // 增加标题高度，留出分隔线空间
+    const sectionH = 32; // 增加分区标题高度（含上方间距）
+    const rowH = 22; // 行高略微增加以容纳更好的字间距
+    // 重新计算总高度
+    // 标题(1) + 分区(2) + 行(13)
+    const contentH = titleH + sectionH * 2 + rowH * 13 + 4; 
+    const cardH = Math.min(maxCardH, Math.max(260, contentH + paddingTop + paddingBottom));
+
+    const cardX = (this.width - cardW) / 2;
+    const cardY = (this.height - cardH) / 2;
+
+    const cx = cardX + cardW / 2;
+    const cy = cardY + cardH / 2;
+
+    ctx.save();
+    ctx.globalAlpha = cardAlpha;
+    ctx.translate(cx, cy);
+    ctx.scale(cardScale, cardScale);
+    ctx.translate(-cx, -cy);
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.10)';
+    ctx.shadowBlur = 22;
+    ctx.shadowOffsetY = 10;
+    ctx.fillStyle = '#FFFFFF';
+    this.drawRoundedRect(cardX, cardY, cardW, cardH, 16); // 圆角稍微减小一点，更硬朗
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath();
+    this.drawRoundedRect(cardX, cardY, cardW, cardH, 16);
+    ctx.clip();
+
+    let y = cardY + paddingTop;
+    
+    // 标题
+    ctx.fillStyle = '#111827'; // 更深的黑色
+    ctx.font = 'bold 18px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('计分速查', cardX + cardW / 2, y);
+    
+    // 标题下分隔线
+    ctx.beginPath();
+    ctx.strokeStyle = '#E5E7EB';
+    ctx.lineWidth = 1;
+    ctx.moveTo(cardX + 20, y + 30);
+    ctx.lineTo(cardX + cardW - 20, y + 30);
+    ctx.stroke();
+    
+    y += titleH;
+
+    const leftX = cardX + paddingX;
+    // 计算右侧内容的起始 x 坐标（左侧标签宽度 + 间距）
+    const leftColW = 50; 
+    const rightX = leftX + leftColW;
+
+    const drawSection = (text) => {
+      // 分区标题上方多留点空
+      y += 8;
+      
+      ctx.fillStyle = '#9CA3AF'; // 浅灰
+      ctx.font = '12px sans-serif'; // 字号略小
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(text, leftX, y);
+      
+      y += (sectionH - 8);
+    };
+
+    const drawRow = (left, right) => {
+      // 左侧：计分项名称（深色、加粗）
+      ctx.font = 'bold 14px sans-serif';
+      ctx.fillStyle = '#374151'; // 深灰
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(left, leftX, y);
+      
+      // 右侧：规则说明（中灰、常规）
+      ctx.font = '13px sans-serif'; // 略小
+      ctx.fillStyle = '#6B7280'; // 中灰
+      ctx.fillText(right, rightX, y);
+      
+      y += rowH;
+    };
+
+    for (const line of lines) {
+      if (line.type === 'section') drawSection(line.text);
+      else if (line.type === 'row') drawRow(line.left, line.right);
+    }
+
+    ctx.restore();
+    ctx.restore();
+
+    this.hitRegions.quickRefCard = { x: cardX, y: cardY, w: cardW, h: cardH };
   }
 
   drawConfirmBackToMenuModal() {
@@ -1464,6 +1608,31 @@ export default class Renderer {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('计分表', this.width / 2, cardY + 20);
+
+    ctx.save();
+    const iconSize = 15;
+    const iconR = 10;
+    const iconX = cardX + 26;
+    const iconY = cardY + 20;
+    const iconKey = 'btnScoreQuickRef';
+    const pressed = this.pressed === iconKey;
+
+    if (pressed) {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.06)';
+      ctx.beginPath();
+      ctx.arc(iconX, iconY, iconR, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.globalAlpha = pressed ? 0.75 : 1;
+    ctx.fillStyle = '#6B7280';
+    ctx.font = `${iconSize}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('?', iconX, iconY);
+    ctx.restore();
+
+    this.hitRegions.btnScoreQuickRef = { x: iconX - 16, y: iconY - 16, w: 32, h: 32 };
     
     // 3. 列表内容
     const listY = cardY + titleH;
@@ -1594,6 +1763,10 @@ export default class Renderer {
 
     if (ui && ui.leaderboardOpen) {
       this.drawSingleLeaderboardModal(ui);
+    }
+
+    if (ui && ui.quickRefVisible) {
+      this.drawScoreQuickRefModal(ui);
     }
   }
   

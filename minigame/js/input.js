@@ -50,6 +50,8 @@ export default class InputHandler {
           'leaderboardBackdrop'
         );
       }
+    } else if (this.main.ui && this.main.ui.quickRefVisible) {
+      keys.push('quickRefCard', 'quickRefBackdrop');
     } else if (s === 'menu') {
       keys.push('btnStartGame', 'btnRules', 'btnLeaderboardMenu');
     } else if (s === 'rules') {
@@ -102,6 +104,8 @@ export default class InputHandler {
         else if (key === 'confirmClearConfirm') this.main.confirmClearSingleLeaderboard();
         else if (key === 'btnLeaderboardRestartSingle') this.main.restartSingleChallengeFromLeaderboard();
         else if (key === 'btnLeaderboardBackToMenu') this.main.backToMenuFromLeaderboard();
+        else if (key === 'quickRefCard') {}
+        else if (key === 'quickRefBackdrop') this.main.closeQuickRef();
         this.touchStart = null;
         return;
       }
@@ -190,6 +194,12 @@ export default class InputHandler {
       return;
     }
 
+    if (this.main.ui && this.main.ui.quickRefVisible) {
+      if (regions.quickRefCard && this.isHit(x, y, regions.quickRefCard)) return;
+      if (regions.quickRefBackdrop && this.isHit(x, y, regions.quickRefBackdrop)) this.main.closeQuickRef();
+      return;
+    }
+
     if (screen === 'menu') {
       if (regions.btnStartGame && this.isHit(x, y, regions.btnStartGame)) {
         this.main.startGame();
@@ -223,6 +233,11 @@ export default class InputHandler {
       return;
     }
 
+    if (regions.btnScoreQuickRef && this.isHit(x, y, regions.btnScoreQuickRef)) {
+      this.main.openQuickRef();
+      return;
+    }
+    
     if (regions.btnLeaderboardGame && this.isHit(x, y, regions.btnLeaderboardGame)) {
       this.main.openSingleLeaderboard();
       return;

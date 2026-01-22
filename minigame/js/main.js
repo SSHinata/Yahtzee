@@ -54,7 +54,9 @@ export default class Main {
         leaderboardHighlightTime: null,
         leaderboardHint: '',
         confirmClearLeaderboardOpen: false,
-        leaderboardShownGameId: null
+        leaderboardShownGameId: null,
+        quickRefVisible: false,
+        quickRefAnim: null
       };
       
       // 动画状态
@@ -89,6 +91,78 @@ export default class Main {
     // 逻辑更新
     this.updateAnimation();
     this.updateSingleLeaderboardAutoPopup();
+    this.updateQuickRefAnimation();
+  }
+
+  easeOut(t) {
+    const x = Math.max(0, Math.min(1, t));
+    return 1 - Math.pow(1 - x, 3);
+  }
+
+  openQuickRef() {
+    if (this.ui.quickRefVisible && this.ui.quickRefAnim && this.ui.quickRefAnim.type === 'opening') return;
+    this.ui.quickRefVisible = true;
+    this.ui.quickRefAnim = {
+      type: 'opening',
+      startTime: Date.now(),
+      openDuration: 160,
+      closeDuration: 120,
+      maskAlpha: 0,
+      cardAlpha: 0,
+      cardScale: 0.98
+    };
+    this.pressedKey = null;
+  }
+
+  closeQuickRef() {
+    if (!this.ui.quickRefVisible) return;
+    const now = Date.now();
+    const current = this.ui.quickRefAnim || {};
+    this.ui.quickRefAnim = {
+      ...current,
+      type: 'closing',
+      startTime: now,
+      closeDuration: 120,
+      maskAlpha: typeof current.maskAlpha === 'number' ? current.maskAlpha : 0.58,
+      cardAlpha: typeof current.cardAlpha === 'number' ? current.cardAlpha : 1,
+      cardScale: 1
+    };
+    this.pressedKey = null;
+  }
+
+  updateQuickRefAnimation() {
+    if (!this.ui.quickRefVisible) return;
+    if (!this.ui.quickRefAnim) return;
+
+    const now = Date.now();
+    const anim = this.ui.quickRefAnim;
+
+    if (anim.type === 'opening') {
+      const t = (now - anim.startTime) / (anim.openDuration || 160);
+      const p = this.easeOut(t);
+      this.ui.quickRefAnim.maskAlpha = 0.58 * p;
+      this.ui.quickRefAnim.cardAlpha = p;
+      this.ui.quickRefAnim.cardScale = 0.98 + 0.02 * p;
+      if (t >= 1) {
+        this.ui.quickRefAnim.maskAlpha = 0.58;
+        this.ui.quickRefAnim.cardAlpha = 1;
+        this.ui.quickRefAnim.cardScale = 1;
+      }
+      return;
+    }
+
+    if (anim.type === 'closing') {
+      const t = (now - anim.startTime) / (anim.closeDuration || 120);
+      const p = Math.max(0, Math.min(1, t));
+      const a = (anim.maskAlpha !== undefined ? anim.maskAlpha : 0.58) * (1 - p);
+      this.ui.quickRefAnim.maskAlpha = a;
+      this.ui.quickRefAnim.cardAlpha = Math.min(this.ui.quickRefAnim.cardAlpha || 1, a / 0.58);
+      this.ui.quickRefAnim.cardScale = 1;
+      if (t >= 1) {
+        this.ui.quickRefVisible = false;
+        this.ui.quickRefAnim = null;
+      }
+    }
   }
 
   updateSingleLeaderboardAutoPopup() {
