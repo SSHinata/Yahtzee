@@ -36,13 +36,26 @@ export default class InputHandler {
     const keys = [];
     if (this.main.ui && this.main.ui.confirmBackToMenuOpen) {
       keys.push('modalCancel', 'modalConfirm');
-    } else
-    if (s === 'menu') {
-      keys.push('btnStartGame', 'btnRules');
+    } else if (this.main.ui && this.main.ui.modeSelectOpen) {
+      keys.push('btnModeLocal2p', 'btnModeSingle', 'btnModeCancel', 'modeSelectBackdrop');
+    } else if (this.main.ui && this.main.ui.leaderboardOpen) {
+      if (this.main.ui.confirmClearLeaderboardOpen) {
+        keys.push('confirmClearCancel', 'confirmClearConfirm');
+      } else {
+        keys.push(
+          'btnLeaderboardRestartSingle',
+          'btnLeaderboardBackToMenu',
+          'btnLeaderboardClear',
+          'btnLeaderboardClose',
+          'leaderboardBackdrop'
+        );
+      }
+    } else if (s === 'menu') {
+      keys.push('btnStartGame', 'btnRules', 'btnLeaderboardMenu');
     } else if (s === 'rules') {
       keys.push('btnBackToMenu', 'btnStartGameRule');
     } else {
-      keys.push('btnBackToMenu', 'btnRoll', 'btnStop', 'btnCancelScore', 'btnRestart');
+      keys.push('btnBackToMenu', 'btnRoll', 'btnStop', 'btnCancelScore', 'btnRestart', 'btnBackToMenuEnd', 'btnLeaderboardGame');
     }
     for (const k of keys) {
       const rect = r[k];
@@ -71,13 +84,24 @@ export default class InputHandler {
       if (inside) {
         if (key === 'btnStartGame' || key === 'btnStartGameRule') this.main.startGame();
         else if (key === 'btnRules') this.main.goRules();
+        else if (key === 'btnLeaderboardMenu' || key === 'btnLeaderboardGame') this.main.openSingleLeaderboard();
         else if (key === 'btnBackToMenu') this.main.handleBackToMenu();
+        else if (key === 'btnBackToMenuEnd') this.main.handleBackToMenuFromGameEnd();
         else if (key === 'btnRoll') this.main.handleRoll();
         else if (key === 'btnStop') this.main.handleStopRolling();
         else if (key === 'btnCancelScore') this.main.handleCancelScoreSelection();
         else if (key === 'btnRestart') this.main.handleRestart();
         else if (key === 'modalCancel') this.main.handleCancelBackToMenu();
         else if (key === 'modalConfirm') this.main.handleConfirmBackToMenu();
+        else if (key === 'btnModeLocal2p') this.main.startGameWithMode('local2p');
+        else if (key === 'btnModeSingle') this.main.startGameWithMode('single');
+        else if (key === 'btnModeCancel' || key === 'modeSelectBackdrop') this.main.closeModeSelect();
+        else if (key === 'btnLeaderboardClose' || key === 'leaderboardBackdrop') this.main.closeSingleLeaderboard();
+        else if (key === 'btnLeaderboardClear') this.main.requestClearSingleLeaderboard();
+        else if (key === 'confirmClearCancel') this.main.cancelClearSingleLeaderboard();
+        else if (key === 'confirmClearConfirm') this.main.confirmClearSingleLeaderboard();
+        else if (key === 'btnLeaderboardRestartSingle') this.main.restartSingleChallengeFromLeaderboard();
+        else if (key === 'btnLeaderboardBackToMenu') this.main.backToMenuFromLeaderboard();
         this.touchStart = null;
         return;
       }
@@ -110,6 +134,62 @@ export default class InputHandler {
       return;
     }
 
+    if (this.main.ui && this.main.ui.modeSelectOpen) {
+      if (regions.btnModeLocal2p && this.isHit(x, y, regions.btnModeLocal2p)) {
+        this.main.startGameWithMode('local2p');
+        return;
+      }
+      if (regions.btnModeSingle && this.isHit(x, y, regions.btnModeSingle)) {
+        this.main.startGameWithMode('single');
+        return;
+      }
+      if (regions.btnModeCancel && this.isHit(x, y, regions.btnModeCancel)) {
+        this.main.closeModeSelect();
+        return;
+      }
+      if (regions.modeSelectBackdrop && this.isHit(x, y, regions.modeSelectBackdrop)) {
+        this.main.closeModeSelect();
+        return;
+      }
+      return;
+    }
+
+    if (this.main.ui && this.main.ui.leaderboardOpen) {
+      if (this.main.ui.confirmClearLeaderboardOpen) {
+        if (regions.confirmClearCancel && this.isHit(x, y, regions.confirmClearCancel)) {
+          this.main.cancelClearSingleLeaderboard();
+          return;
+        }
+        if (regions.confirmClearConfirm && this.isHit(x, y, regions.confirmClearConfirm)) {
+          this.main.confirmClearSingleLeaderboard();
+          return;
+        }
+        return;
+      }
+
+      if (regions.btnLeaderboardRestartSingle && this.isHit(x, y, regions.btnLeaderboardRestartSingle)) {
+        this.main.restartSingleChallengeFromLeaderboard();
+        return;
+      }
+      if (regions.btnLeaderboardBackToMenu && this.isHit(x, y, regions.btnLeaderboardBackToMenu)) {
+        this.main.backToMenuFromLeaderboard();
+        return;
+      }
+      if (regions.btnLeaderboardClear && this.isHit(x, y, regions.btnLeaderboardClear)) {
+        this.main.requestClearSingleLeaderboard();
+        return;
+      }
+      if (regions.btnLeaderboardClose && this.isHit(x, y, regions.btnLeaderboardClose)) {
+        this.main.closeSingleLeaderboard();
+        return;
+      }
+      if (regions.leaderboardBackdrop && this.isHit(x, y, regions.leaderboardBackdrop)) {
+        this.main.closeSingleLeaderboard();
+        return;
+      }
+      return;
+    }
+
     if (screen === 'menu') {
       if (regions.btnStartGame && this.isHit(x, y, regions.btnStartGame)) {
         this.main.startGame();
@@ -117,6 +197,10 @@ export default class InputHandler {
       }
       if (regions.btnRules && this.isHit(x, y, regions.btnRules)) {
         this.main.goRules();
+        return;
+      }
+      if (regions.btnLeaderboardMenu && this.isHit(x, y, regions.btnLeaderboardMenu)) {
+        this.main.openSingleLeaderboard();
         return;
       }
       return;
@@ -136,6 +220,11 @@ export default class InputHandler {
 
     if (regions.btnBackToMenu && this.isHit(x, y, regions.btnBackToMenu)) {
       this.main.handleBackToMenu();
+      return;
+    }
+
+    if (regions.btnLeaderboardGame && this.isHit(x, y, regions.btnLeaderboardGame)) {
+      this.main.openSingleLeaderboard();
       return;
     }
     
@@ -165,6 +254,11 @@ export default class InputHandler {
 
     if (regions.btnRestart && this.isHit(x, y, regions.btnRestart)) {
       this.main.handleRestart();
+      return;
+    }
+
+    if (regions.btnBackToMenuEnd && this.isHit(x, y, regions.btnBackToMenuEnd)) {
+      this.main.handleBackToMenuFromGameEnd();
       return;
     }
     

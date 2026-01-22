@@ -1,7 +1,9 @@
 import { createNewGame, startTurn, actionRoll, actionEnterScoreSelection, actionToggleHold, actionStopRolling, actionCancelScoreSelection, actionApplyScore, endTurnAndAdvance } from '../core/engine/gameEngine';
 import { Phase } from '../core/engine/rules';
+import { calcPlayerTotal } from '../core/engine/scoring';
 import Renderer from './render';
 import InputHandler from './input';
+import { addSingleScore, clearSingleLeaderboard, getSingleLeaderboard } from './scoreStorage';
 
 /**
  * 游戏主入口
@@ -18,6 +20,7 @@ export default class Main {
       const info = wx.getSystemInfoSync();
       const { windowWidth, windowHeight, pixelRatio, safeArea } = info;
       const safeAreaTop = safeArea ? safeArea.top : 20; // 默认给20px
+      const safeAreaBottomInset = safeArea ? Math.max(0, windowHeight - safeArea.bottom) : 0;
       
       // 获取上屏 Canvas
       // 注意：在小游戏中，wx.createCanvas() 首次调用返回的是主 Canvas
@@ -36,79 +39,29 @@ export default class Main {
       this.logicWidth = windowWidth;
       this.logicHeight = windowHeight;
 
-      // 初始化游戏核心状态
-      this.players = [{ id: 'p1', name: '玩家 1' }, { id: 'p2', name: '玩家 2' }];
+      this.mode = 'local2p';
+      this.players = this.getPlayerInfosByMode(this.mode);
       this.state = createNewGame(this.players);
 
       this.screen = 'menu';
       this.pressedKey = null;
-      this.ui = { confirmBackToMenuOpen: false };
+      this.ui = {
+        confirmBackToMenuOpen: false,
+        modeSelectOpen: false,
+        leaderboardOpen: false,
+        leaderboardFromGameEnd: false,
+        leaderboardRecords: [],
+        leaderboardHighlightTime: null,
+        leaderboardHint: '',
+        confirmClearLeaderboardOpen: false,
+        leaderboardShownGameId: null
+      };
       
       // 动画状态
       this.animState = { active: false, startTime: 0, dice: [] };
 
       // 初始化渲染器
-      this.renderer = new Renderer(this.ctx, this.logicWidth, this.logicHeight, safeAreaTop);
-
-      // 预加载背景图片
-      this.bgImage = wx.createImage();
-      this.bgImageLoaded = false;
-      this.bgImageSources = [
-        'resources/img/indexBg1.webp'
-      ];
-      this.bgImageSourceIndex = 0;
-
-      const loadNextBgImage = () => {
-        if (this.bgImageSourceIndex >= this.bgImageSources.length) {
-          console.error('Background image load failed for all known paths.');
-          return;
-        }
-        const nextSrc = this.bgImageSources[this.bgImageSourceIndex];
-        this.bgImageSourceIndex += 1;
-        // console.log('Loading background image:', nextSrc);
-        this.bgImage.src = nextSrc;
-      };
-
-      this.bgImage.onload = () => {
-        // console.log('Background image loaded successfully');
-        this.bgImageLoaded = true;
-      };
-      this.bgImage.onerror = (e) => {
-        console.error('Background image load failed:', e);
-        loadNextBgImage();
-      };
-
-      loadNextBgImage();
-      
-      // 预加载中景图片 (paperBg1)
-      this.paperBgImage = wx.createImage();
-      this.paperBgImageLoaded = false;
-      this.paperBgImageSources = [
-        'resources/img/paperBg1.webp'
-      ];
-      this.paperBgImageSourceIndex = 0;
-
-      const loadNextPaperBgImage = () => {
-        if (this.paperBgImageSourceIndex >= this.paperBgImageSources.length) {
-          console.error('Paper background image load failed for all known paths.');
-          return;
-        }
-        const nextSrc = this.paperBgImageSources[this.paperBgImageSourceIndex];
-        this.paperBgImageSourceIndex += 1;
-        // console.log('Loading paper background image:', nextSrc);
-        this.paperBgImage.src = nextSrc;
-      };
-
-      this.paperBgImage.onload = () => {
-        // console.log('Paper background image loaded successfully');
-        this.paperBgImageLoaded = true;
-      };
-      this.paperBgImage.onerror = (e) => {
-        console.error('Paper background image load failed:', e);
-        loadNextPaperBgImage();
-      };
-
-      loadNextPaperBgImage();
+      this.renderer = new Renderer(this.ctx, this.logicWidth, this.logicHeight, safeAreaTop, safeAreaBottomInset);
       
       // 初始化输入处理
       this.inputHandler = new InputHandler(this);
@@ -135,6 +88,26 @@ export default class Main {
   update() {
     // 逻辑更新
     this.updateAnimation();
+    this.updateSingleLeaderboardAutoPopup();
+  }
+
+  updateSingleLeaderboardAutoPopup() {
+    if (!this.state || this.state.phase !== Phase.GAME_END) return;
+    if (this.mode !== 'single') return;
+    if (this.ui.leaderboardShownGameId === this.state.gameId) return;
+    if (!this.state.players || this.state.players.length !== 1) return;
+
+    const totalScore = calcPlayerTotal(this.state.players[0]);
+    const { entry, rank, inTop10, records } = addSingleScore(totalScore);
+
+    this.ui.leaderboardShownGameId = this.state.gameId;
+    this.ui.leaderboardRecords = records;
+    this.ui.leaderboardOpen = true;
+    this.ui.leaderboardFromGameEnd = true;
+    this.ui.leaderboardHighlightTime = inTop10 ? entry.time : null;
+    this.ui.leaderboardHint = inTop10 ? `本局排名：第 ${rank} 名（已进榜）` : `本局排名：第 ${rank} 名（未进榜）`;
+    this.ui.confirmClearLeaderboardOpen = false;
+    this.pressedKey = null;
   }
 
   updateAnimation() {
@@ -248,8 +221,6 @@ export default class Main {
       this.renderer.render(
         this.screen,
         this.state,
-        this.bgImageLoaded ? this.bgImage : null,
-        this.paperBgImageLoaded ? this.paperBgImage : null,
         this.ui,
         this.animState
       );
@@ -259,6 +230,9 @@ export default class Main {
   // --- 暴露给 InputHandler 的动作接口 ---
 
   goMenu() {
+    this.ui.modeSelectOpen = false;
+    this.ui.leaderboardOpen = false;
+    this.ui.confirmClearLeaderboardOpen = false;
     this.screen = 'menu';
   }
 
@@ -284,15 +258,92 @@ export default class Main {
   }
 
   goRules() {
+    this.ui.modeSelectOpen = false;
+    this.ui.leaderboardOpen = false;
+    this.ui.confirmClearLeaderboardOpen = false;
     this.screen = 'rules';
   }
 
   startGame() {
+    this.ui.modeSelectOpen = true;
+    this.pressedKey = null;
+  }
+
+  getPlayerInfosByMode(mode) {
+    if (mode === 'single') {
+      return [{ id: 'p1', name: '玩家 1' }];
+    }
+    return [{ id: 'p1', name: '玩家 1' }, { id: 'p2', name: '玩家 2' }];
+  }
+
+  startGameWithMode(mode) {
+    this.mode = mode;
+    this.players = this.getPlayerInfosByMode(mode);
+    this.ui.modeSelectOpen = false;
+    this.ui.leaderboardOpen = false;
+    this.ui.confirmClearLeaderboardOpen = false;
+    this.ui.leaderboardShownGameId = null;
     this.state = createNewGame(this.players);
     if (this.state.phase === Phase.INIT) {
       this.state = startTurn(this.state);
     }
     this.screen = 'game';
+    this.pressedKey = null;
+  }
+
+  closeModeSelect() {
+    this.ui.modeSelectOpen = false;
+    this.pressedKey = null;
+  }
+
+  openSingleLeaderboard() {
+    this.ui.modeSelectOpen = false;
+    this.ui.confirmClearLeaderboardOpen = false;
+    this.ui.leaderboardFromGameEnd = false;
+    this.ui.leaderboardHighlightTime = null;
+    this.ui.leaderboardHint = '';
+    this.ui.leaderboardRecords = getSingleLeaderboard();
+    this.ui.leaderboardOpen = true;
+    this.pressedKey = null;
+  }
+
+  closeSingleLeaderboard() {
+    this.ui.leaderboardOpen = false;
+    this.ui.confirmClearLeaderboardOpen = false;
+    this.pressedKey = null;
+  }
+
+  requestClearSingleLeaderboard() {
+    this.ui.confirmClearLeaderboardOpen = true;
+    this.pressedKey = null;
+  }
+
+  cancelClearSingleLeaderboard() {
+    this.ui.confirmClearLeaderboardOpen = false;
+    this.pressedKey = null;
+  }
+
+  confirmClearSingleLeaderboard() {
+    clearSingleLeaderboard();
+    this.ui.leaderboardRecords = getSingleLeaderboard();
+    this.ui.confirmClearLeaderboardOpen = false;
+    this.pressedKey = null;
+  }
+
+  restartSingleChallengeFromLeaderboard() {
+    this.closeSingleLeaderboard();
+    this.startGameWithMode('single');
+  }
+
+  backToMenuFromLeaderboard() {
+    this.closeSingleLeaderboard();
+    this.goMenu();
+  }
+
+  handleBackToMenuFromGameEnd() {
+    this.state = createNewGame(this.players);
+    this.goMenu();
+    this.pressedKey = null;
   }
 
   setPressedKey(key) {
@@ -352,6 +403,7 @@ export default class Main {
   }
 
   handleRestart() {
+    this.ui.leaderboardShownGameId = null;
     this.state = createNewGame(this.players);
     if (this.state.phase === Phase.INIT) {
       this.state = startTurn(this.state);

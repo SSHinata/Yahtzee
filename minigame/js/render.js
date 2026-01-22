@@ -1,6 +1,7 @@
 import { Phase, ScoreKey } from '../core/engine/rules';
 import { getScoreOptionsForUI } from '../core/engine/uiSelectors';
 import { calcPlayerTotal } from '../core/engine/scoring';
+import { formatMMDD } from './scoreStorage';
 
 // 中文映射表
 const SCORE_KEY_MAP = {
@@ -30,7 +31,7 @@ const PHASE_MAP = {
 
 export default class Renderer {
   // 构造函数接收 logicWidth 和 logicHeight，不再依赖 ctx.canvas 的物理像素尺寸
-  constructor(ctx, logicWidth, logicHeight, safeAreaTop) {
+  constructor(ctx, logicWidth, logicHeight, safeAreaTop, safeAreaBottomInset) {
     this.ctx = ctx;
     this.width = logicWidth;
     this.height = logicHeight;
@@ -62,6 +63,7 @@ export default class Renderer {
     // 简单的布局常量
     const safeTop = safeAreaTop || 20;
     this.safeTop = safeTop;
+    this.safeBottom = safeAreaBottomInset || 0;
     
     // 三段式布局 Y 轴规划
     // 1. 顶部状态区
@@ -106,24 +108,42 @@ export default class Renderer {
       scoreCells: [], // {x, y, w, h, key}
       btnRestart: null, // {x, y, w, h}
       btnBackToMenu: null, // {x, y, w, h}
+      btnBackToMenuEnd: null, // {x, y, w, h}
       modalCancel: null, // {x, y, w, h}
       modalConfirm: null, // {x, y, w, h}
       btnStartGame: null, // {x, y, w, h}
-      btnRules: null // {x, y, w, h}
+      btnRules: null, // {x, y, w, h}
+      btnLeaderboardMenu: null, // {x, y, w, h}
+      btnLeaderboardGame: null, // {x, y, w, h}
+      modeSelectBackdrop: null, // {x, y, w, h}
+      btnModeLocal2p: null, // {x, y, w, h}
+      btnModeSingle: null, // {x, y, w, h}
+      btnModeCancel: null, // {x, y, w, h}
+      leaderboardBackdrop: null, // {x, y, w, h}
+      btnLeaderboardClose: null, // {x, y, w, h}
+      btnLeaderboardClear: null, // {x, y, w, h}
+      btnLeaderboardRestartSingle: null, // {x, y, w, h}
+      btnLeaderboardBackToMenu: null, // {x, y, w, h}
+      confirmClearCancel: null, // {x, y, w, h}
+      confirmClearConfirm: null // {x, y, w, h}
     };
     this.pressed = null;
   }
 
-  render(screen, state, bgImage, paperBgImage, ui, animState) {
+  render(screen, state, ui, animState) {
     if (screen === 'menu') {
-      this.renderMenu(bgImage, paperBgImage);
+      this.renderMenu();
+      if (ui && ui.modeSelectOpen) this.drawModeSelectModal();
+      if (ui && ui.leaderboardOpen) this.drawSingleLeaderboardModal(ui);
       return;
     }
     if (screen === 'rules') {
-      this.renderRules(bgImage); // 传入背景图
+      this.renderRules();
+      if (ui && ui.modeSelectOpen) this.drawModeSelectModal();
+      if (ui && ui.leaderboardOpen) this.drawSingleLeaderboardModal(ui);
       return;
     }
-    this.renderGame(state, bgImage, paperBgImage, ui, animState);
+    this.renderGame(state, ui, animState);
   }
 
   resetHitRegions() {
@@ -134,18 +154,125 @@ export default class Renderer {
     this.hitRegions.scoreCells = [];
     this.hitRegions.btnRestart = null;
     this.hitRegions.btnBackToMenu = null;
+    this.hitRegions.btnBackToMenuEnd = null;
     this.hitRegions.modalCancel = null;
     this.hitRegions.modalConfirm = null;
     this.hitRegions.btnStartGame = null;
     this.hitRegions.btnRules = null;
+    this.hitRegions.btnLeaderboardMenu = null;
+    this.hitRegions.btnLeaderboardGame = null;
+    this.hitRegions.modeSelectBackdrop = null;
+    this.hitRegions.btnModeLocal2p = null;
+    this.hitRegions.btnModeSingle = null;
+    this.hitRegions.btnModeCancel = null;
+    this.hitRegions.leaderboardBackdrop = null;
+    this.hitRegions.btnLeaderboardClose = null;
+    this.hitRegions.btnLeaderboardClear = null;
+    this.hitRegions.btnLeaderboardRestartSingle = null;
+    this.hitRegions.btnLeaderboardBackToMenu = null;
+    this.hitRegions.confirmClearCancel = null;
+    this.hitRegions.confirmClearConfirm = null;
     this.hitRegions.btnStartGameRule = null;
   }
 
-  drawConfirmBackToMenuModal() {
+  drawModeSelectModal() {
     const ctx = this.ctx;
     const C = this.COLORS;
 
-    ctx.fillStyle = 'rgba(32, 24, 20, 0.62)';
+    ctx.fillStyle = 'rgba(17, 24, 39, 0.58)';
+    ctx.fillRect(0, 0, this.width, this.height);
+    this.hitRegions.modeSelectBackdrop = { x: 0, y: 0, w: this.width, h: this.height };
+
+    const cardW = Math.min(320, this.width - 48);
+    const cardH = 260;
+    const cardX = (this.width - cardW) / 2;
+    const cardY = (this.height - cardH) / 2;
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.10)';
+    ctx.shadowBlur = 22;
+    ctx.shadowOffsetY = 10;
+    ctx.fillStyle = '#FFFFFF';
+    this.drawRoundedRect(cardX, cardY, cardW, cardH, 22);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.fillStyle = C.text;
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('选择模式', cardX + cardW / 2, cardY + 18);
+
+    const btnH = 44;
+    const btnW = cardW - 48;
+    const btnX = cardX + 24;
+    const btnY1 = cardY + 72;
+    const gap = 14;
+
+    const drawBtn = (key, y, label, variant) => {
+      const inset = this.pressed === key ? 2 : 0;
+      const rx = btnX + inset;
+      const ry = y + inset;
+      const rw = btnW - inset * 2;
+      const rh = btnH - inset * 2;
+
+      ctx.save();
+      if (variant === 'primary') {
+        if (inset === 0) {
+          ctx.shadowColor = 'rgba(0, 123, 255, 0.25)';
+          ctx.shadowBlur = 10;
+          ctx.shadowOffsetY = 4;
+        }
+        ctx.fillStyle = inset ? C.primaryPressed : C.primary;
+        this.drawRoundedRect(rx, ry, rw, rh, 18);
+        ctx.fill();
+        ctx.restore();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 16px sans-serif';
+      } else if (variant === 'success') {
+        if (inset === 0) {
+          ctx.shadowColor = 'rgba(40, 167, 69, 0.25)';
+          ctx.shadowBlur = 10;
+          ctx.shadowOffsetY = 4;
+        }
+        ctx.fillStyle = inset ? C.successPressed : C.success;
+        this.drawRoundedRect(rx, ry, rw, rh, 18);
+        ctx.fill();
+        ctx.restore();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 16px sans-serif';
+      } else {
+        ctx.fillStyle = inset ? '#E5E7EB' : '#F3F4F6';
+        this.drawRoundedRect(rx, ry, rw, rh, 18);
+        ctx.fill();
+        ctx.strokeStyle = '#D1D5DB';
+        ctx.lineWidth = 1;
+        this.drawRoundedRect(rx, ry, rw, rh, 18);
+        ctx.stroke();
+        ctx.restore();
+        ctx.fillStyle = C.textSub;
+        ctx.font = '16px sans-serif';
+      }
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, btnX + btnW / 2, y + btnH / 2);
+    };
+
+    drawBtn('btnModeLocal2p', btnY1, '本地双人', 'primary');
+    drawBtn('btnModeSingle', btnY1 + btnH + gap, '单人挑战', 'success');
+    drawBtn('btnModeCancel', btnY1 + (btnH + gap) * 2, '取消', 'secondary');
+
+    this.hitRegions.btnModeLocal2p = { x: btnX, y: btnY1, w: btnW, h: btnH };
+    this.hitRegions.btnModeSingle = { x: btnX, y: btnY1 + btnH + gap, w: btnW, h: btnH };
+    this.hitRegions.btnModeCancel = { x: btnX, y: btnY1 + (btnH + gap) * 2, w: btnW, h: btnH };
+  }
+
+  drawConfirmClearLeaderboardModal() {
+    const ctx = this.ctx;
+    const C = this.COLORS;
+
+    ctx.fillStyle = 'rgba(17, 24, 39, 0.58)';
     ctx.fillRect(0, 0, this.width, this.height);
 
     const cardW = Math.min(320, this.width - 48);
@@ -157,18 +284,279 @@ export default class Renderer {
     ctx.shadowColor = 'rgba(0, 0, 0, 0.10)';
     ctx.shadowBlur = 22;
     ctx.shadowOffsetY = 10;
-    ctx.fillStyle = '#FFF8E7';
+    ctx.fillStyle = '#FFFFFF';
     this.drawRoundedRect(cardX, cardY, cardW, cardH, 22);
     ctx.fill();
     ctx.restore();
 
-    ctx.fillStyle = '#3F2F23';
+    ctx.fillStyle = C.text;
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('清空记录？', cardX + cardW / 2, cardY + 18);
+
+    ctx.fillStyle = C.textSub;
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    this.drawWrappedText('此操作不可撤销，将删除本地单人历史榜单。', cardX + 24, cardY + 58, cardW - 48, 20);
+
+    const btnH = 40;
+    const gap = 12;
+    const btnW = (cardW - 40 - gap) / 2;
+    const btnY = cardY + cardH - btnH - 16;
+    const cancelX = cardX + 20;
+    const confirmX = cancelX + btnW + gap;
+
+    const drawBtn = (key, x, y, w, h, label, variant) => {
+      const inset = this.pressed === key ? 2 : 0;
+      const rx = x + inset;
+      const ry = y + inset;
+      const rw = w - inset * 2;
+      const rh = h - inset * 2;
+
+      ctx.save();
+      if (variant === 'danger') {
+        ctx.fillStyle = inset ? '#DC2626' : '#EF4444';
+        this.drawRoundedRect(rx, ry, rw, rh, 14);
+        ctx.fill();
+        ctx.restore();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 14px sans-serif';
+      } else {
+        ctx.fillStyle = inset ? '#E5E7EB' : '#F3F4F6';
+        this.drawRoundedRect(rx, ry, rw, rh, 14);
+        ctx.fill();
+        ctx.strokeStyle = '#D1D5DB';
+        ctx.lineWidth = 1;
+        this.drawRoundedRect(rx, ry, rw, rh, 14);
+        ctx.stroke();
+        ctx.restore();
+        ctx.fillStyle = C.textSub;
+        ctx.font = '14px sans-serif';
+      }
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, x + w / 2, y + h / 2);
+    };
+
+    drawBtn('confirmClearCancel', cancelX, btnY, btnW, btnH, '取消', 'secondary');
+    drawBtn('confirmClearConfirm', confirmX, btnY, btnW, btnH, '清空', 'danger');
+
+    this.hitRegions.confirmClearCancel = { x: cancelX, y: btnY, w: btnW, h: btnH };
+    this.hitRegions.confirmClearConfirm = { x: confirmX, y: btnY, w: btnW, h: btnH };
+  }
+
+  drawSingleLeaderboardModal(ui) {
+    const ctx = this.ctx;
+    const C = this.COLORS;
+    const records = Array.isArray(ui.leaderboardRecords) ? ui.leaderboardRecords : [];
+    const fromGameEnd = !!ui.leaderboardFromGameEnd;
+    const highlightTime = typeof ui.leaderboardHighlightTime === 'number' ? ui.leaderboardHighlightTime : null;
+
+    ctx.fillStyle = 'rgba(17, 24, 39, 0.58)';
+    ctx.fillRect(0, 0, this.width, this.height);
+    this.hitRegions.leaderboardBackdrop = fromGameEnd ? null : { x: 0, y: 0, w: this.width, h: this.height };
+
+    const cardW = Math.min(340, this.width - 40);
+    const maxCardH = Math.max(360, this.height - this.safeTop - 40);
+    const cardH = Math.min(520, maxCardH);
+    const cardX = (this.width - cardW) / 2;
+    const cardY = (this.height - cardH) / 2;
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.10)';
+    ctx.shadowBlur = 22;
+    ctx.shadowOffsetY = 10;
+    ctx.fillStyle = '#FFFFFF';
+    this.drawRoundedRect(cardX, cardY, cardW, cardH, 22);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath();
+    this.drawRoundedRect(cardX, cardY, cardW, cardH, 22);
+    ctx.clip();
+
+    ctx.fillStyle = C.text;
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('历史最高（单人）', cardX + cardW / 2, cardY + 18);
+
+    if (ui.leaderboardHint) {
+      ctx.fillStyle = C.textSub;
+      ctx.font = '13px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(ui.leaderboardHint, cardX + cardW / 2, cardY + 48);
+    }
+
+    const listX = cardX + 20;
+    const listY = cardY + 78;
+    const listW = cardW - 40;
+    const rowH = 34;
+    const maxRows = 10;
+    const listInnerPad = 16;
+
+    const btnH = 44;
+    const btnY = cardY + cardH - btnH - 20;
+    const listBottomGap = 14;
+    const maxListH = rowH * maxRows + listInnerPad;
+    const listH = Math.max(120, Math.min(maxListH, btnY - listY - listBottomGap));
+
+    ctx.save();
+    ctx.beginPath();
+    this.drawRoundedRect(listX, listY, listW, listH, 14);
+    ctx.fillStyle = '#F9FAFB';
+    ctx.fill();
+    ctx.restore();
+
+    if (records.length === 0) {
+      ctx.fillStyle = C.textSub;
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('暂无记录，完成一局单人挑战后会自动上榜', cardX + cardW / 2, listY + listH / 2);
+    } else {
+      let y = listY + 10;
+      const visibleRows = Math.max(1, Math.min(maxRows, Math.floor((listH - listInnerPad) / rowH)));
+      const shown = records.slice(0, visibleRows);
+      shown.forEach((r, i) => {
+        const isHighlight = highlightTime !== null && r.time === highlightTime;
+        if (isHighlight) {
+          ctx.save();
+          ctx.fillStyle = 'rgba(0, 123, 255, 0.10)';
+          this.drawRoundedRect(listX + 6, y - 2, listW - 12, rowH, 10);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        ctx.font = '14px sans-serif';
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = isHighlight ? C.primary : C.text;
+        ctx.fillText(`#${i + 1}`, listX + 14, y + rowH / 2 - 2);
+
+        ctx.textAlign = 'right';
+        ctx.fillStyle = isHighlight ? C.primary : C.text;
+        ctx.font = isHighlight ? 'bold 15px sans-serif' : '15px sans-serif';
+        ctx.fillText(`${r.score} 分`, listX + listW - 14, y + rowH / 2 - 2);
+
+        ctx.textAlign = 'center';
+        ctx.fillStyle = C.textSub;
+        ctx.font = '12px sans-serif';
+        ctx.fillText(formatMMDD(r.time), listX + listW / 2, y + rowH / 2 - 2);
+
+        y += rowH;
+      });
+    }
+
+    if (fromGameEnd) {
+      const gap = 12;
+      const btnW = (cardW - 40 - gap) / 2;
+      const leftX = cardX + 20;
+      const rightX = leftX + btnW + gap;
+
+      const backInset = this.pressed === 'btnLeaderboardBackToMenu' ? 2 : 0;
+      ctx.save();
+      ctx.fillStyle = backInset ? '#E5E7EB' : '#F3F4F6';
+      this.drawRoundedRect(leftX + backInset, btnY + backInset, btnW - backInset * 2, btnH - backInset * 2, 20);
+      ctx.fill();
+      ctx.strokeStyle = '#D1D5DB';
+      ctx.lineWidth = 1;
+      this.drawRoundedRect(leftX + backInset, btnY + backInset, btnW - backInset * 2, btnH - backInset * 2, 20);
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.fillStyle = C.textSub;
+      ctx.font = 'bold 15px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('返回主页', leftX + btnW / 2, btnY + btnH / 2);
+
+      const restartInset = this.pressed === 'btnLeaderboardRestartSingle' ? 2 : 0;
+      ctx.fillStyle = restartInset ? C.primaryPressed : C.primary;
+      this.drawRoundedRect(rightX + restartInset, btnY + restartInset, btnW - restartInset * 2, btnH - restartInset * 2, 20);
+      ctx.fill();
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = 'bold 15px sans-serif';
+      ctx.fillText('再来一局', rightX + btnW / 2, btnY + btnH / 2);
+
+      this.hitRegions.btnLeaderboardBackToMenu = { x: leftX, y: btnY, w: btnW, h: btnH };
+      this.hitRegions.btnLeaderboardRestartSingle = { x: rightX, y: btnY, w: btnW, h: btnH };
+    } else {
+      const gap = 10;
+      const btnW = (cardW - 40 - gap) / 2;
+      const leftX = cardX + 20;
+      const rightX = leftX + btnW + gap;
+
+      const clearInset = this.pressed === 'btnLeaderboardClear' ? 2 : 0;
+      ctx.save();
+      ctx.fillStyle = clearInset ? '#E5E7EB' : '#F3F4F6';
+      this.drawRoundedRect(leftX + clearInset, btnY + clearInset, btnW - clearInset * 2, btnH - clearInset * 2, 20);
+      ctx.fill();
+      ctx.strokeStyle = '#D1D5DB';
+      ctx.lineWidth = 1;
+      this.drawRoundedRect(leftX + clearInset, btnY + clearInset, btnW - clearInset * 2, btnH - clearInset * 2, 20);
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.fillStyle = C.textSub;
+      ctx.font = 'bold 15px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('清空记录', leftX + btnW / 2, btnY + btnH / 2);
+
+      const closeInset = this.pressed === 'btnLeaderboardClose' ? 2 : 0;
+      ctx.fillStyle = closeInset ? C.primaryPressed : C.primary;
+      this.drawRoundedRect(rightX + closeInset, btnY + closeInset, btnW - closeInset * 2, btnH - closeInset * 2, 20);
+      ctx.fill();
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = 'bold 15px sans-serif';
+      ctx.fillText('关闭', rightX + btnW / 2, btnY + btnH / 2);
+
+      this.hitRegions.btnLeaderboardClear = { x: leftX, y: btnY, w: btnW, h: btnH };
+      this.hitRegions.btnLeaderboardClose = { x: rightX, y: btnY, w: btnW, h: btnH };
+    }
+
+    if (ui.confirmClearLeaderboardOpen) {
+      this.drawConfirmClearLeaderboardModal();
+    }
+
+    ctx.restore();
+  }
+
+  drawConfirmBackToMenuModal() {
+    const ctx = this.ctx;
+    const C = this.COLORS;
+
+    ctx.fillStyle = 'rgba(17, 24, 39, 0.58)';
+    ctx.fillRect(0, 0, this.width, this.height);
+
+    const cardW = Math.min(320, this.width - 48);
+    const cardH = 200;
+    const cardX = (this.width - cardW) / 2;
+    const cardY = (this.height - cardH) / 2;
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.10)';
+    ctx.shadowBlur = 22;
+    ctx.shadowOffsetY = 10;
+    ctx.fillStyle = '#FFFFFF';
+    this.drawRoundedRect(cardX, cardY, cardW, cardH, 22);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.fillStyle = C.text;
     ctx.font = 'bold 20px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.fillText('这局还没结束哦', cardX + cardW / 2, cardY + 18);
 
-    ctx.fillStyle = '#6B5B4B';
+    ctx.fillStyle = C.textSub;
     ctx.font = '14px sans-serif';
     const paddingX = 24;
     const contentX = cardX + paddingX;
@@ -207,16 +595,16 @@ export default class Renderer {
         ctx.fillStyle = '#FFFFFF';
         ctx.font = 'bold 14px sans-serif';
       } else {
-        ctx.fillStyle = inset ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.55)';
+        ctx.fillStyle = inset ? '#E5E7EB' : '#F3F4F6';
         this.drawRoundedRect(rx, ry, rw, rh, 14);
         ctx.fill();
-        ctx.strokeStyle = 'rgba(63, 47, 35, 0.18)';
+        ctx.strokeStyle = '#D1D5DB';
         ctx.lineWidth = 1;
         this.drawRoundedRect(rx, ry, rw, rh, 14);
         ctx.stroke();
         ctx.restore();
 
-        ctx.fillStyle = '#6B5B4B';
+        ctx.fillStyle = C.textSub;
         ctx.font = '14px sans-serif';
       }
       ctx.textAlign = 'center';
@@ -310,55 +698,13 @@ export default class Renderer {
     ctx.shadowOffsetY = 0;
   }
 
-  renderMenu(bgImage, paperBgImage) {
+  renderMenu() {
     const ctx = this.ctx;
     const C = this.COLORS;
     this.resetHitRegions();
 
-    // 1. 绘制背景图或纯色兜底
-    if (bgImage) {
-      // 保持比例拉伸填满
-      // 简单做法：cover 模式
-      const imgRatio = bgImage.width / bgImage.height;
-      const screenRatio = this.width / this.height;
-      let sw, sh, sx, sy;
-      
-      if (screenRatio > imgRatio) {
-        sw = bgImage.width;
-        sh = bgImage.width / screenRatio;
-        sx = 0;
-        sy = (bgImage.height - sh) / 2;
-      } else {
-        sh = bgImage.height;
-        sw = bgImage.height * screenRatio;
-        sx = (bgImage.width - sw) / 2;
-        sy = 0;
-      }
-      ctx.drawImage(bgImage, sx, sy, sw, sh, 0, 0, this.width, this.height);
-    } else {
-      ctx.fillStyle = C.bg;
-      ctx.fillRect(0, 0, this.width, this.height);
-    }
-
-    // 1.5 绘制中景 (paperBg1)
-    if (paperBgImage) {
-      // 宽度设定为屏幕宽度的 85%
-      const pW = this.width * 0.85;
-      const pH = pW * (paperBgImage.height / paperBgImage.width);
-      const pX = (this.width - pW) / 2;
-      // 垂直居中
-      const pY = (this.height - pH) / 2;
-
-      ctx.save();
-      ctx.globalAlpha = 0.8; // 中景图片半透明
-      // 可选：添加一点投影，使其看起来像浮在背景上
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
-      ctx.shadowBlur = 15;
-      ctx.shadowOffsetY = 5;
-      
-      ctx.drawImage(paperBgImage, pX, pY, pW, pH);
-      ctx.restore();
-    }
+    ctx.fillStyle = C.bg;
+    ctx.fillRect(0, 0, this.width, this.height);
 
     // 2. 标题区（卡片化）
     const titleCardW = Math.min(300, this.width - 40);
@@ -446,35 +792,51 @@ export default class Renderer {
     ctx.font = '18px sans-serif';
     ctx.fillText('游戏规则', x + btnW / 2, rulesY + btnH / 2);
     this.hitRegions.btnRules = { x, y: rulesY, w: btnW, h: btnH };
+
+    const label = '单人榜';
+    const pillH = 32;
+    const pillPadX = 14;
+    const pillRightInset = 22;
+    const pillBaseBottomInset = 36;
+    const pillBottomInset = pillBaseBottomInset + (this.safeBottom || 0);
+
+    ctx.font = '13px sans-serif';
+    const textW = ctx.measureText(label).width;
+    const pillW = Math.max(72, Math.ceil(textW + pillPadX * 2));
+    const pillX = this.width - pillRightInset - pillW;
+    const pillY = this.height - pillBottomInset - pillH;
+    const r = pillH / 2;
+
+    ctx.save();
+    if (this.pressed !== 'btnLeaderboardMenu') {
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.08)';
+      ctx.shadowBlur = 8;
+      ctx.shadowOffsetY = 2;
+    }
+    ctx.fillStyle = this.pressed === 'btnLeaderboardMenu' ? '#F3F4F6' : '#FFFFFF';
+    this.drawRoundedRect(pillX, pillY, pillW, pillH, r);
+    ctx.fill();
+    ctx.strokeStyle = '#D1D5DB';
+    ctx.lineWidth = 1;
+    this.drawRoundedRect(pillX, pillY, pillW, pillH, r);
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.fillStyle = '#374151';
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, pillX + pillW / 2, pillY + pillH / 2);
+    this.hitRegions.btnLeaderboardMenu = { x: pillX, y: pillY, w: pillW, h: pillH };
   }
 
-  renderRules(bgImage) {
+  renderRules() {
     const ctx = this.ctx;
     const C = this.COLORS;
     this.resetHitRegions();
 
-    // 1. 背景统一（使用主页背景或兜底色）
-    if (bgImage) {
-      const imgRatio = bgImage.width / bgImage.height;
-      const screenRatio = this.width / this.height;
-      let sw, sh, sx, sy;
-      
-      if (screenRatio > imgRatio) {
-        sw = bgImage.width;
-        sh = bgImage.width / screenRatio;
-        sx = 0;
-        sy = (bgImage.height - sh) / 2;
-      } else {
-        sh = bgImage.height;
-        sw = bgImage.height * screenRatio;
-        sx = (bgImage.width - sw) / 2;
-        sy = 0;
-      }
-      ctx.drawImage(bgImage, sx, sy, sw, sh, 0, 0, this.width, this.height);
-    } else {
-      ctx.fillStyle = C.bg;
-      ctx.fillRect(0, 0, this.width, this.height);
-    }
+    ctx.fillStyle = C.bg;
+    ctx.fillRect(0, 0, this.width, this.height);
 
     // 2. 顶部 Header
     // 布局：[< 返回]  游戏规则  (摘要在下)
@@ -760,10 +1122,39 @@ export default class Renderer {
     ctx.fillText(playerName, backX + backW + 10, cardY + 30);
     
     // 右侧：回合数
+    const showLeaderboardBtn = state.players.length === 1;
+    let rightPadding = 20;
+    if (showLeaderboardBtn) {
+      const btnW = 44;
+      const btnH = 24;
+      const btnX = cardX + cardW - 20 - btnW;
+      const btnY = cardY + 18;
+      const inset = this.pressed === 'btnLeaderboardGame' ? 1 : 0;
+
+      ctx.save();
+      ctx.fillStyle = this.pressed === 'btnLeaderboardGame' ? 'rgba(0, 0, 0, 0.08)' : 'rgba(255, 255, 255, 0.75)';
+      this.drawRoundedRect(btnX + inset, btnY + inset, btnW - inset * 2, btnH - inset * 2, 12);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(107, 114, 128, 0.35)';
+      ctx.lineWidth = 1;
+      this.drawRoundedRect(btnX + inset, btnY + inset, btnW - inset * 2, btnH - inset * 2, 12);
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.fillStyle = C.text;
+      ctx.font = '13px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('榜', btnX + btnW / 2, btnY + btnH / 2);
+
+      this.hitRegions.btnLeaderboardGame = { x: btnX, y: btnY, w: btnW, h: btnH };
+      rightPadding = 20 + btnW + 10;
+    }
+
     ctx.textAlign = 'right';
     ctx.font = '16px sans-serif';
     ctx.fillStyle = C.textSub;
-    ctx.fillText(`第 ${state.round} / 13 轮`, cardX + cardW - 20, cardY + 30);
+    ctx.fillText(`第 ${state.round} / 13 轮`, cardX + cardW - rightPadding, cardY + 30);
     
     // 分隔线
     ctx.beginPath();
@@ -1171,49 +1562,14 @@ export default class Renderer {
     ctx.fillText(`总分: ${totalScore}`, cardX + cardW - 20, cardY + 20);
   }
 
-  renderGame(state, bgImage, paperBgImage, ui, animState) {
+  renderGame(state, ui, animState) {
     const ctx = this.ctx;
     const L = this.LAYOUT;
     const C = this.COLORS;
     this.resetHitRegions();
 
-    // 1. 背景绘制 (与 Menu/Rules 统一逻辑)
-    if (bgImage) {
-      const imgRatio = bgImage.width / bgImage.height;
-      const screenRatio = this.width / this.height;
-      let sw, sh, sx, sy;
-      
-      if (screenRatio > imgRatio) {
-        sw = bgImage.width;
-        sh = bgImage.width / screenRatio;
-        sx = 0;
-        sy = (bgImage.height - sh) / 2;
-      } else {
-        sh = bgImage.height;
-        sw = bgImage.height * screenRatio;
-        sx = (bgImage.width - sw) / 2;
-        sy = 0;
-      }
-      ctx.drawImage(bgImage, sx, sy, sw, sh, 0, 0, this.width, this.height);
-    } else {
-      ctx.fillStyle = C.bg;
-      ctx.fillRect(0, 0, this.width, this.height);
-    }
-
-    // 1.5 中景装饰 (如果存在)
-    if (paperBgImage) {
-      // 宽度设定为屏幕宽度的 90%
-      const pW = this.width * 0.9;
-      const pH = pW * (paperBgImage.height / paperBgImage.width);
-      const pX = (this.width - pW) / 2;
-      // 垂直居中偏上一点
-      const pY = (this.height - pH) / 2 - 20;
-
-      ctx.save();
-      ctx.globalAlpha = 0.4; // 较淡，作为氛围背景
-      ctx.drawImage(paperBgImage, pX, pY, pW, pH);
-      ctx.restore();
-    }
+    ctx.fillStyle = C.bg;
+    ctx.fillRect(0, 0, this.width, this.height);
     
     // 2. 绘制三段式布局
     this.drawStatusCard(state);
@@ -1222,7 +1578,8 @@ export default class Renderer {
     
     // 4. 回合结束/游戏结束 遮罩层 (保持原有逻辑)
     if (state.phase === Phase.TURN_END) {
-      this.drawOverlay('回合结束', '正在切换下一位玩家...');
+      const subTitle = state.players.length === 1 ? '正在进入下一回合...' : '正在切换下一位玩家...';
+      this.drawOverlay('回合结束', subTitle);
     }
 
     if (state.phase === Phase.GAME_END) {
@@ -1233,6 +1590,10 @@ export default class Renderer {
 
     if (ui && ui.confirmBackToMenuOpen) {
       this.drawConfirmBackToMenuModal();
+    }
+
+    if (ui && ui.leaderboardOpen) {
+      this.drawSingleLeaderboardModal(ui);
     }
   }
   
@@ -1299,23 +1660,40 @@ export default class Renderer {
       rankY += 40;
     });
     
-    // 再来一局按钮
-    const btnW = 180;
     const btnH = 48;
-    const btnX = centerX - btnW / 2;
+    const gap = 12;
+    const btnW = (cardW - 80 - gap) / 2;
     const btnY = cardY + cardH - btnH - 30;
-    
-    const restartInset = this.pressed === 'btnRestart' ? 2 : 0;
-    ctx.fillStyle = this.pressed === 'btnRestart' ? C.primaryPressed : C.primary;
-    this.drawRoundedRect(btnX + restartInset, btnY + restartInset, btnW - restartInset*2, btnH - restartInset*2, 24);
+    const leftX = cardX + 40;
+    const rightX = leftX + btnW + gap;
+
+    const backInset = this.pressed === 'btnBackToMenuEnd' ? 2 : 0;
+    ctx.save();
+    ctx.fillStyle = backInset ? '#E5E7EB' : '#F3F4F6';
+    this.drawRoundedRect(leftX + backInset, btnY + backInset, btnW - backInset * 2, btnH - backInset * 2, 24);
     ctx.fill();
-    
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 18px sans-serif';
+    ctx.strokeStyle = '#D1D5DB';
+    ctx.lineWidth = 1;
+    this.drawRoundedRect(leftX + backInset, btnY + backInset, btnW - backInset * 2, btnH - backInset * 2, 24);
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.fillStyle = C.textSub;
+    ctx.font = 'bold 16px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('再来一局', centerX, btnY + btnH / 2);
-    
-    this.hitRegions.btnRestart = { x: btnX, y: btnY, w: btnW, h: btnH };
+    ctx.fillText('返回主菜单', leftX + btnW / 2, btnY + btnH / 2);
+
+    const restartInset = this.pressed === 'btnRestart' ? 2 : 0;
+    ctx.fillStyle = restartInset ? C.primaryPressed : C.primary;
+    this.drawRoundedRect(rightX + restartInset, btnY + restartInset, btnW - restartInset * 2, btnH - restartInset * 2, 24);
+    ctx.fill();
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillText('再来一局', rightX + btnW / 2, btnY + btnH / 2);
+
+    this.hitRegions.btnBackToMenuEnd = { x: leftX, y: btnY, w: btnW, h: btnH };
+    this.hitRegions.btnRestart = { x: rightX, y: btnY, w: btnW, h: btnH };
   }
 }
