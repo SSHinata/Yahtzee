@@ -112,6 +112,7 @@ export default class Renderer {
       modalCancel: null, // {x, y, w, h}
       modalConfirm: null, // {x, y, w, h}
       btnStartGame: null, // {x, y, w, h}
+      btnOnlineBattle: null,
       btnRules: null, // {x, y, w, h}
       btnLeaderboardMenu: null, // {x, y, w, h}
       btnLeaderboardGame: null, // {x, y, w, h}
@@ -127,6 +128,13 @@ export default class Renderer {
       confirmClearCancel: null, // {x, y, w, h}
       confirmClearConfirm: null, // {x, y, w, h}
       btnScoreQuickRef: null, // {x, y, w, h}
+      btnLobbyShare: null,
+      btnLobbyStart: null,
+      btnLobbyExit: null,
+      onlineEntryBackdrop: null,
+      btnOnlineCreate: null,
+      btnOnlineJoin: null,
+      btnOnlineEntryCancel: null,
       quickRefBackdrop: null, // {x, y, w, h}
       quickRefCard: null // {x, y, w, h}
     };
@@ -135,9 +143,14 @@ export default class Renderer {
 
   render(screen, state, ui, animState) {
     if (screen === 'menu') {
-      this.renderMenu();
+      this.renderMenu(ui);
       if (ui && ui.modeSelectOpen) this.drawModeSelectModal();
       if (ui && ui.leaderboardOpen) this.drawSingleLeaderboardModal(ui);
+      if (ui && ui.onlineEntryOpen) this.drawOnlineEntryModal();
+      return;
+    }
+    if (screen === 'lobby') {
+      this.renderLobby(ui);
       return;
     }
     if (screen === 'rules') {
@@ -161,6 +174,7 @@ export default class Renderer {
     this.hitRegions.modalCancel = null;
     this.hitRegions.modalConfirm = null;
     this.hitRegions.btnStartGame = null;
+    this.hitRegions.btnOnlineBattle = null;
     this.hitRegions.btnRules = null;
     this.hitRegions.btnLeaderboardMenu = null;
     this.hitRegions.btnLeaderboardGame = null;
@@ -176,9 +190,87 @@ export default class Renderer {
     this.hitRegions.confirmClearCancel = null;
     this.hitRegions.confirmClearConfirm = null;
     this.hitRegions.btnScoreQuickRef = null;
+    this.hitRegions.btnLobbyShare = null;
+    this.hitRegions.btnLobbyStart = null;
+    this.hitRegions.btnLobbyExit = null;
+    this.hitRegions.onlineEntryBackdrop = null;
+    this.hitRegions.btnOnlineCreate = null;
+    this.hitRegions.btnOnlineJoin = null;
+    this.hitRegions.btnOnlineEntryCancel = null;
     this.hitRegions.quickRefBackdrop = null;
     this.hitRegions.quickRefCard = null;
     this.hitRegions.btnStartGameRule = null;
+  }
+
+  drawOnlineEntryModal() {
+    const ctx = this.ctx
+    const C = this.COLORS
+
+    ctx.fillStyle = 'rgba(17, 24, 39, 0.58)'
+    ctx.fillRect(0, 0, this.width, this.height)
+    this.hitRegions.onlineEntryBackdrop = { x: 0, y: 0, w: this.width, h: this.height }
+
+    const cardW = Math.min(320, this.width - 48)
+    const cardH = 260
+    const cardX = (this.width - cardW) / 2
+    const cardY = (this.height - cardH) / 2
+
+    ctx.save()
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.10)'
+    ctx.shadowBlur = 22
+    ctx.shadowOffsetY = 10
+    ctx.fillStyle = '#FFFFFF'
+    this.drawRoundedRect(cardX, cardY, cardW, cardH, 22)
+    ctx.fill()
+    ctx.restore()
+
+    ctx.fillStyle = C.text
+    ctx.font = 'bold 20px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'top'
+    ctx.fillText('联机对战', cardX + cardW / 2, cardY + 18)
+
+    ctx.fillStyle = '#6B7280'
+    ctx.font = '14px sans-serif'
+    ctx.fillText('创建房间或输入房间号加入', cardX + cardW / 2, cardY + 50)
+
+    const btnH = 44
+    const btnW = cardW - 48
+    const btnX = cardX + 24
+    const btnY1 = cardY + 86
+    const gap = 14
+
+    const drawBtn = (key, y, text, style) => {
+      const inset = this.pressed === key ? 2 : 0
+      let fill = '#F3F4F6'
+      let textColor = C.text
+      if (style === 'primary') {
+        fill = this.pressed === key ? C.primaryPressed : C.primary
+        textColor = '#fff'
+      }
+      if (style === 'success') {
+        fill = this.pressed === key ? C.successPressed : C.success
+        textColor = '#fff'
+      }
+      ctx.save()
+      ctx.fillStyle = fill
+      this.drawRoundedRect(btnX + inset, y + inset, btnW - inset * 2, btnH - inset * 2, 18)
+      ctx.fill()
+      ctx.restore()
+      ctx.fillStyle = textColor
+      ctx.font = 'bold 16px sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(text, btnX + btnW / 2, y + btnH / 2)
+    }
+
+    drawBtn('btnOnlineCreate', btnY1, '创建房间', 'success')
+    drawBtn('btnOnlineJoin', btnY1 + btnH + gap, '加入房间（输入房间号）', 'primary')
+    drawBtn('btnOnlineEntryCancel', btnY1 + (btnH + gap) * 2, '取消', 'secondary')
+
+    this.hitRegions.btnOnlineCreate = { x: btnX, y: btnY1, w: btnW, h: btnH }
+    this.hitRegions.btnOnlineJoin = { x: btnX, y: btnY1 + btnH + gap, w: btnW, h: btnH }
+    this.hitRegions.btnOnlineEntryCancel = { x: btnX, y: btnY1 + (btnH + gap) * 2, w: btnW, h: btnH }
   }
 
   drawModeSelectModal() {
@@ -842,7 +934,7 @@ export default class Renderer {
     ctx.shadowOffsetY = 0;
   }
 
-  renderMenu() {
+  renderMenu(ui) {
     const ctx = this.ctx;
     const C = this.COLORS;
     this.resetHitRegions();
@@ -910,8 +1002,29 @@ export default class Renderer {
     ctx.fillText('开始游戏', x + btnW / 2, startY + btnH / 2);
     this.hitRegions.btnStartGame = { x, y: startY, w: btnW, h: btnH };
 
+    const onlineY = startY + btnH + gap;
+    const onlineInset = this.pressed === 'btnOnlineBattle' ? 2 : 0;
+
+    ctx.save();
+    if (onlineInset === 0) {
+      ctx.shadowColor = 'rgba(40, 167, 69, 0.25)';
+      ctx.shadowBlur = 10;
+      ctx.shadowOffsetY = 4;
+    }
+    ctx.fillStyle = this.pressed === 'btnOnlineBattle' ? C.successPressed : C.success;
+    this.drawRoundedRect(x + onlineInset, onlineY + onlineInset, btnW - onlineInset * 2, btnH - onlineInset * 2, 28);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('联机对战', x + btnW / 2, onlineY + btnH / 2);
+    this.hitRegions.btnOnlineBattle = { x, y: onlineY, w: btnW, h: btnH };
+
     // 游戏规则（描边/浅色）
-    const rulesY = startY + btnH + gap;
+    const rulesY = onlineY + btnH + gap;
     const rulesInset = this.pressed === 'btnRules' ? 2 : 0;
     
     ctx.save();
@@ -972,6 +1085,219 @@ export default class Renderer {
     ctx.textBaseline = 'middle';
     ctx.fillText(label, pillX + pillW / 2, pillY + pillH / 2);
     this.hitRegions.btnLeaderboardMenu = { x: pillX, y: pillY, w: pillW, h: pillH };
+
+  }
+
+  renderLobby(ui) {
+    const ctx = this.ctx;
+    const C = this.COLORS;
+    this.resetHitRegions();
+
+    ctx.fillStyle = C.bg;
+    ctx.fillRect(0, 0, this.width, this.height);
+
+    const lobby = (ui && ui.lobby) || {}
+    const roomId = lobby.roomId || ''
+    const room = lobby.room || null
+    const self = lobby.self || {}
+    const creating = !!lobby.creating
+    const joining = !!lobby.joining
+
+    const headerY = this.safeTop + 18
+    ctx.fillStyle = C.text
+    ctx.font = 'bold 24px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'top'
+    ctx.fillText('房间等待', this.width / 2, headerY)
+
+    ctx.fillStyle = '#9CA3AF'
+    ctx.font = '14px sans-serif'
+    ctx.fillText('邀请好友加入后由房主开始', this.width / 2, headerY + 34)
+
+    const cardW = Math.min(340, this.width - 48)
+    const cardX = (this.width - cardW) / 2
+    let y = headerY + 74
+
+    const roomCardH = 92
+    ctx.save()
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.06)'
+    ctx.shadowBlur = 14
+    ctx.shadowOffsetY = 6
+    ctx.fillStyle = '#FFFFFF'
+    this.drawRoundedRect(cardX, y, cardW, roomCardH, 16)
+    ctx.fill()
+    ctx.restore()
+
+    ctx.fillStyle = '#6B7280'
+    ctx.font = '13px sans-serif'
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'top'
+    ctx.fillText('房间号', cardX + 16, y + 14)
+
+    ctx.fillStyle = C.text
+    ctx.font = 'bold 30px sans-serif'
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'alphabetic'
+    const roomIdText = roomId ? roomId : (creating ? '创建中…' : '——')
+    ctx.fillText(roomIdText, cardX + 16, y + 62)
+
+    ctx.fillStyle = '#9CA3AF'
+    ctx.font = '12px sans-serif'
+    ctx.textAlign = 'right'
+    ctx.textBaseline = 'alphabetic'
+    ctx.fillText((room && room.status) ? `状态：${room.status}` : '状态：—', cardX + cardW - 16, y + 62)
+
+    y += roomCardH + 16
+
+    const seatH = 64
+    const seatGap = 12
+    const seats = room && Array.isArray(room.seats) ? room.seats : []
+    for (let i = 0; i < 2; i++) {
+      const s = seats[i] || {}
+      const joined = !!s.uid
+      ctx.save()
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.05)'
+      ctx.shadowBlur = 10
+      ctx.shadowOffsetY = 4
+      ctx.fillStyle = '#FFFFFF'
+      this.drawRoundedRect(cardX, y, cardW, seatH, 14)
+      ctx.fill()
+      ctx.restore()
+
+      ctx.fillStyle = '#6B7280'
+      ctx.font = '13px sans-serif'
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'top'
+      ctx.fillText(i === 0 ? '座位 1' : '座位 2', cardX + 16, y + 14)
+
+      ctx.fillStyle = C.text
+      ctx.font = 'bold 16px sans-serif'
+      ctx.textBaseline = 'alphabetic'
+      ctx.fillText(joined ? (s.name || (i === 0 ? '玩家1' : '玩家2')) : '等待加入', cardX + 16, y + 46)
+
+      ctx.textAlign = 'right'
+      const online = joined ? !!s.online : false
+      ctx.fillStyle = joined ? (online ? '#16A34A' : '#F97316') : '#9CA3AF'
+      ctx.font = '13px sans-serif'
+      ctx.fillText(joined ? (online ? '在线' : '离线') : '等待加入', cardX + cardW - 16, y + 42)
+
+      if (self && self.seatIndex === i) {
+        ctx.fillStyle = '#3B82F6'
+        ctx.font = '12px sans-serif'
+        ctx.textAlign = 'right'
+        ctx.fillText('你', cardX + cardW - 16, y + 20)
+      }
+
+      y += seatH + seatGap
+    }
+
+    y += 8
+
+    const btnW = cardW
+    const btnH = 48
+    const btnX = cardX
+    const btnGap = 12
+
+    const shareInset = this.pressed === 'btnLobbyShare' ? 2 : 0
+    ctx.save()
+    if (shareInset === 0) {
+      ctx.shadowColor = 'rgba(0, 123, 255, 0.25)'
+      ctx.shadowBlur = 10
+      ctx.shadowOffsetY = 4
+    }
+    ctx.fillStyle = this.pressed === 'btnLobbyShare' ? C.primaryPressed : C.primary
+    this.drawRoundedRect(btnX + shareInset, y + shareInset, btnW - shareInset * 2, btnH - shareInset * 2, 18)
+    ctx.fill()
+    ctx.restore()
+
+    ctx.fillStyle = '#FFFFFF'
+    ctx.font = 'bold 16px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('分享邀请', btnX + btnW / 2, y + btnH / 2)
+    this.hitRegions.btnLobbyShare = { x: btnX, y, w: btnW, h: btnH }
+
+    y += btnH + btnGap
+
+    const canStart = !!(room && room.status === 'waiting' && room.seats && room.seats[0] && room.seats[0].uid && room.seats[0].online && room.seats[1] && room.seats[1].uid && room.seats[1].online && lobby.self && lobby.self.isOwner)
+    const startInset = this.pressed === 'btnLobbyStart' ? 2 : 0
+    ctx.save()
+    if (!canStart) ctx.globalAlpha = 0.5
+    if (startInset === 0) {
+      ctx.shadowColor = 'rgba(40, 167, 69, 0.25)'
+      ctx.shadowBlur = 10
+      ctx.shadowOffsetY = 4
+    }
+    ctx.fillStyle = this.pressed === 'btnLobbyStart' ? C.successPressed : C.success
+    this.drawRoundedRect(btnX + startInset, y + startInset, btnW - startInset * 2, btnH - startInset * 2, 18)
+    ctx.fill()
+    ctx.restore()
+
+    ctx.fillStyle = '#FFFFFF'
+    ctx.font = 'bold 16px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('开始', btnX + btnW / 2, y + btnH / 2)
+    this.hitRegions.btnLobbyStart = { x: btnX, y, w: btnW, h: btnH }
+
+    y += btnH + btnGap
+
+    const exitInset = this.pressed === 'btnLobbyExit' ? 2 : 0
+    ctx.save()
+    ctx.fillStyle = exitInset ? '#E5E7EB' : '#F3F4F6'
+    this.drawRoundedRect(btnX + exitInset, y + exitInset, btnW - exitInset * 2, btnH - exitInset * 2, 18)
+    ctx.fill()
+    ctx.strokeStyle = '#D1D5DB'
+    ctx.lineWidth = 1
+    this.drawRoundedRect(btnX + exitInset, y + exitInset, btnW - exitInset * 2, btnH - exitInset * 2, 18)
+    ctx.stroke()
+    ctx.restore()
+
+    ctx.fillStyle = C.textSub
+    ctx.font = '16px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('退出', btnX + btnW / 2, y + btnH / 2)
+    this.hitRegions.btnLobbyExit = { x: btnX, y, w: btnW, h: btnH }
+
+    const drawWrappedText = (text, cx, baseY, maxW, lineH, maxLines) => {
+      const s = String(text || '').trim()
+      if (!s) return
+      const lines = []
+      let cur = ''
+      for (let i = 0; i < s.length; i++) {
+        const ch = s[i]
+        const next = cur + ch
+        if (ctx.measureText(next).width > maxW && cur) {
+          lines.push(cur)
+          cur = ch
+          if (lines.length >= maxLines) break
+        } else {
+          cur = next
+        }
+      }
+      if (cur && lines.length < maxLines) lines.push(cur)
+      const startY = baseY - lineH * (lines.length - 1)
+      for (let i = 0; i < lines.length; i++) {
+        ctx.fillText(lines[i], cx, startY + lineH * i)
+      }
+    }
+
+    const errorText = lobby.error || ''
+    if (errorText) {
+      ctx.fillStyle = '#DC2626'
+      ctx.font = '13px sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'alphabetic'
+      const baseY = Math.min(this.height - (this.safeBottom || 0) - 16, y + btnH + 26)
+      drawWrappedText(errorText, this.width / 2, baseY, Math.max(160, this.width - 32), 16, 3)
+    } else if (joining) {
+      ctx.fillStyle = '#9CA3AF'
+      ctx.font = '13px sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'alphabetic'
+      ctx.fillText('正在加入房间…', this.width / 2, Math.min(this.height - (this.safeBottom || 0) - 16, y + btnH + 26))
+    }
   }
 
   renderRules() {
@@ -1203,7 +1529,7 @@ export default class Renderer {
     this.hitRegions.btnStartGameRule = { x: cardX, y: btnY, w: cardW, h: btnH };
   }
 
-  drawStatusCard(state) {
+  drawStatusCard(state, ui) {
     const ctx = this.ctx;
     const L = this.LAYOUT;
     const C = this.COLORS;
@@ -1295,6 +1621,14 @@ export default class Renderer {
       rightPadding = 20 + btnW + 10;
     }
 
+    const roomId = ui && ui.lobby && ui.lobby.roomId ? String(ui.lobby.roomId) : ''
+    if (roomId) {
+      ctx.textAlign = 'right';
+      ctx.font = '12px sans-serif';
+      ctx.fillStyle = '#9CA3AF';
+      ctx.fillText(`房间 ${roomId}`, cardX + cardW - rightPadding, cardY + 16);
+    }
+
     ctx.textAlign = 'right';
     ctx.font = '16px sans-serif';
     ctx.fillStyle = C.textSub;
@@ -1308,6 +1642,12 @@ export default class Renderer {
     ctx.lineTo(cardX + cardW - 20, cardY + 50);
     ctx.stroke();
     
+    const seatIndex = ui && ui.lobby && ui.lobby.self && typeof ui.lobby.self.seatIndex === 'number' ? ui.lobby.self.seatIndex : -1
+    const onlineWaiting = seatIndex >= 0 && typeof state.currentPlayerIndex === 'number' && state.currentPlayerIndex !== seatIndex
+    const roomSeats = ui && ui.lobby && ui.lobby.room && Array.isArray(ui.lobby.room.seats) ? ui.lobby.room.seats : null
+    const peer = (seatIndex >= 0 && roomSeats && roomSeats.length >= 2) ? roomSeats[seatIndex === 0 ? 1 : 0] : null
+    const peerOffline = !!(peer && peer.uid && peer.online === false)
+
     // 第二行：阶段 + 剩余次数
     const row2Y = cardY + 70;
     
@@ -1322,7 +1662,17 @@ export default class Renderer {
     ctx.fillText(phaseText, cardX + 36, row2Y);
     
     // 右侧：剩余次数 (仅在掷骰阶段显示)
-    if (isRolling) {
+    if (peerOffline) {
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#F97316';
+      ctx.font = '14px sans-serif';
+      ctx.fillText('对方离线', cardX + cardW - 20, row2Y);
+    } else if (onlineWaiting) {
+      ctx.textAlign = 'right';
+      ctx.fillStyle = C.textSub;
+      ctx.font = '14px sans-serif';
+      ctx.fillText('等待对方操作', cardX + cardW - 20, row2Y);
+    } else if (isRolling) {
       ctx.textAlign = 'right';
       ctx.fillStyle = C.textSub;
       ctx.font = '14px sans-serif';
@@ -1340,10 +1690,12 @@ export default class Renderer {
     }
   }
 
-  drawDiceArea(state, animState) {
+  drawDiceArea(state, ui, animState) {
     const ctx = this.ctx;
     const L = this.LAYOUT;
     const C = this.COLORS;
+    const seatIndex = ui && ui.lobby && ui.lobby.self && typeof ui.lobby.self.seatIndex === 'number' ? ui.lobby.self.seatIndex : -1
+    const onlineWaiting = seatIndex >= 0 && typeof state.currentPlayerIndex === 'number' && state.currentPlayerIndex !== seatIndex
     
     // 区域背景 (透明，只作为容器)
     // 1. 绘制骰子
@@ -1377,7 +1729,7 @@ export default class Renderer {
       this.drawDie(x, y, L.DICE_SIZE, displayValue, isHeld, animProps);
       
       // 注册点击区域 (仅当不在动画中且在 Rolling 阶段有效)
-      if (!(animState && animState.active)) {
+      if (!onlineWaiting && !(animState && animState.active) && state.phase === Phase.ROLLING) {
          this.hitRegions.dice.push({ x, y, w: L.DICE_SIZE, h: L.DICE_SIZE, index: i });
       }
     });
@@ -1401,7 +1753,7 @@ export default class Renderer {
       const rollInset = this.pressed === 'btnRoll' ? 2 : 0;
       
       ctx.save();
-      if (isAnimating) {
+      if (isAnimating || onlineWaiting) {
          ctx.globalAlpha = 0.6;
       }
       // 投影
@@ -1422,7 +1774,7 @@ export default class Renderer {
       const rollText = state.turn.rollCount === 0 ? '摇骰子' : `再摇一次`;
       ctx.fillText(rollText, rollX + rollBtnW / 2, btnY + L.BTN_H / 2);
       
-      if (!isAnimating) {
+      if (!isAnimating && !onlineWaiting) {
         this.hitRegions.btnRoll = { x: rollX, y: btnY, w: rollBtnW, h: L.BTN_H };
       }
       
@@ -1432,7 +1784,7 @@ export default class Renderer {
         const stopInset = this.pressed === 'btnStop' ? 2 : 0;
         
         ctx.save();
-        if (isAnimating) ctx.globalAlpha = 0.6;
+        if (isAnimating || onlineWaiting) ctx.globalAlpha = 0.6;
         
         ctx.fillStyle = this.pressed === 'btnStop' ? C.successPressed : C.success;
         this.drawRoundedRect(stopX + stopInset, btnY + stopInset, L.BTN_W - stopInset * 2, L.BTN_H - stopInset * 2, 22);
@@ -1442,7 +1794,7 @@ export default class Renderer {
         ctx.fillStyle = '#fff';
         ctx.fillText('选择计分', stopX + L.BTN_W / 2, btnY + L.BTN_H / 2);
       
-        if (!isAnimating) {
+        if (!isAnimating && !onlineWaiting) {
           this.hitRegions.btnStop = { x: stopX, y: btnY, w: L.BTN_W, h: L.BTN_H };
         }
     }
@@ -1461,7 +1813,7 @@ export default class Renderer {
        const cancelInset = this.pressed === 'btnCancelScore' ? 2 : 0;
        
        ctx.save();
-       if (isAnimating) ctx.globalAlpha = 0.6;
+       if (isAnimating || onlineWaiting) ctx.globalAlpha = 0.6;
 
        // 按钮样式：浅灰色或描边，表示“返回”
        ctx.fillStyle = this.pressed === 'btnCancelScore' ? '#E5E7EB' : '#F3F4F6';
@@ -1478,7 +1830,7 @@ export default class Renderer {
        ctx.font = '14px sans-serif';
        ctx.fillText('继续投掷', cancelBtnX + cancelBtnW / 2, btnY + L.BTN_H / 2);
        
-       if (!isAnimating) {
+       if (!isAnimating && !onlineWaiting) {
          this.hitRegions.btnCancelScore = { x: cancelBtnX, y: btnY, w: cancelBtnW, h: L.BTN_H };
        }
        
@@ -1579,7 +1931,7 @@ export default class Renderer {
     }
   }
 
-  drawScoreCard(state) {
+  drawScoreCard(state, ui) {
     const ctx = this.ctx;
     const L = this.LAYOUT;
     const C = this.COLORS;
@@ -1650,7 +2002,9 @@ export default class Renderer {
     
     const drawRow = (opt) => {
       const isUsed = !opt.enabled;
-      const isSelectable = state.phase === Phase.SELECT_SCORE && opt.enabled;
+      const seatIndex = ui && ui.lobby && ui.lobby.self && typeof ui.lobby.self.seatIndex === 'number' ? ui.lobby.self.seatIndex : -1
+      const onlineWaiting = seatIndex >= 0 && typeof state.currentPlayerIndex === 'number' && state.currentPlayerIndex !== seatIndex
+      const isSelectable = state.phase === Phase.SELECT_SCORE && opt.enabled && !onlineWaiting;
       
       const rowX = cardX + 10;
       const rowW = cardW - 20;
@@ -1741,9 +2095,9 @@ export default class Renderer {
     ctx.fillRect(0, 0, this.width, this.height);
     
     // 2. 绘制三段式布局
-    this.drawStatusCard(state);
-    this.drawDiceArea(state, animState);
-    this.drawScoreCard(state);
+    this.drawStatusCard(state, ui);
+    this.drawDiceArea(state, ui, animState);
+    this.drawScoreCard(state, ui);
     
     // 4. 回合结束/游戏结束 遮罩层 (保持原有逻辑)
     if (state.phase === Phase.TURN_END) {

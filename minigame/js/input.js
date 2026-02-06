@@ -36,6 +36,8 @@ export default class InputHandler {
     const keys = [];
     if (this.main.ui && this.main.ui.confirmBackToMenuOpen) {
       keys.push('modalCancel', 'modalConfirm');
+    } else if (this.main.ui && this.main.ui.onlineEntryOpen) {
+      keys.push('btnOnlineCreate', 'btnOnlineJoin', 'btnOnlineEntryCancel', 'onlineEntryBackdrop');
     } else if (this.main.ui && this.main.ui.modeSelectOpen) {
       keys.push('btnModeLocal2p', 'btnModeSingle', 'btnModeCancel', 'modeSelectBackdrop');
     } else if (this.main.ui && this.main.ui.leaderboardOpen) {
@@ -52,8 +54,10 @@ export default class InputHandler {
       }
     } else if (this.main.ui && this.main.ui.quickRefVisible) {
       keys.push('quickRefCard', 'quickRefBackdrop');
+    } else if (s === 'lobby') {
+      keys.push('btnLobbyShare', 'btnLobbyStart', 'btnLobbyExit');
     } else if (s === 'menu') {
-      keys.push('btnStartGame', 'btnRules', 'btnLeaderboardMenu');
+      keys.push('btnStartGame', 'btnOnlineBattle', 'btnRules', 'btnLeaderboardMenu');
     } else if (s === 'rules') {
       keys.push('btnBackToMenu', 'btnStartGameRule');
     } else {
@@ -85,6 +89,7 @@ export default class InputHandler {
       this.main.clearPressedKey();
       if (inside) {
         if (key === 'btnStartGame' || key === 'btnStartGameRule') this.main.startGame();
+        else if (key === 'btnOnlineBattle') this.main.openOnlineEntry();
         else if (key === 'btnRules') this.main.goRules();
         else if (key === 'btnLeaderboardMenu' || key === 'btnLeaderboardGame') this.main.openSingleLeaderboard();
         else if (key === 'btnBackToMenu') this.main.handleBackToMenu();
@@ -93,6 +98,9 @@ export default class InputHandler {
         else if (key === 'btnStop') this.main.handleStopRolling();
         else if (key === 'btnCancelScore') this.main.handleCancelScoreSelection();
         else if (key === 'btnRestart') this.main.handleRestart();
+        else if (key === 'btnLobbyShare') this.main.lobbyShare();
+        else if (key === 'btnLobbyStart') this.main.lobbyStart();
+        else if (key === 'btnLobbyExit') this.main.lobbyExit();
         else if (key === 'modalCancel') this.main.handleCancelBackToMenu();
         else if (key === 'modalConfirm') this.main.handleConfirmBackToMenu();
         else if (key === 'btnModeLocal2p') this.main.startGameWithMode('local2p');
@@ -106,6 +114,9 @@ export default class InputHandler {
         else if (key === 'btnLeaderboardBackToMenu') this.main.backToMenuFromLeaderboard();
         else if (key === 'quickRefCard') {}
         else if (key === 'quickRefBackdrop') this.main.closeQuickRef();
+        else if (key === 'btnOnlineCreate') this.main.onlineEntryCreateRoom();
+        else if (key === 'btnOnlineJoin') this.main.onlineEntryJoinRoom();
+        else if (key === 'btnOnlineEntryCancel' || key === 'onlineEntryBackdrop') this.main.closeOnlineEntry();
         this.touchStart = null;
         return;
       }
@@ -133,6 +144,26 @@ export default class InputHandler {
       }
       if (regions.modalConfirm && this.isHit(x, y, regions.modalConfirm)) {
         this.main.handleConfirmBackToMenu();
+        return;
+      }
+      return;
+    }
+
+    if (this.main.ui && this.main.ui.onlineEntryOpen) {
+      if (regions.btnOnlineCreate && this.isHit(x, y, regions.btnOnlineCreate)) {
+        this.main.onlineEntryCreateRoom();
+        return;
+      }
+      if (regions.btnOnlineJoin && this.isHit(x, y, regions.btnOnlineJoin)) {
+        this.main.onlineEntryJoinRoom();
+        return;
+      }
+      if (regions.btnOnlineEntryCancel && this.isHit(x, y, regions.btnOnlineEntryCancel)) {
+        this.main.closeOnlineEntry();
+        return;
+      }
+      if (regions.onlineEntryBackdrop && this.isHit(x, y, regions.onlineEntryBackdrop)) {
+        this.main.closeOnlineEntry();
         return;
       }
       return;
@@ -205,12 +236,32 @@ export default class InputHandler {
         this.main.startGame();
         return;
       }
+      if (regions.btnOnlineBattle && this.isHit(x, y, regions.btnOnlineBattle)) {
+        this.main.openOnlineEntry();
+        return;
+      }
       if (regions.btnRules && this.isHit(x, y, regions.btnRules)) {
         this.main.goRules();
         return;
       }
       if (regions.btnLeaderboardMenu && this.isHit(x, y, regions.btnLeaderboardMenu)) {
         this.main.openSingleLeaderboard();
+        return;
+      }
+      return;
+    }
+
+    if (screen === 'lobby') {
+      if (regions.btnLobbyShare && this.isHit(x, y, regions.btnLobbyShare)) {
+        this.main.lobbyShare();
+        return;
+      }
+      if (regions.btnLobbyStart && this.isHit(x, y, regions.btnLobbyStart)) {
+        this.main.lobbyStart();
+        return;
+      }
+      if (regions.btnLobbyExit && this.isHit(x, y, regions.btnLobbyExit)) {
+        this.main.lobbyExit();
         return;
       }
       return;
