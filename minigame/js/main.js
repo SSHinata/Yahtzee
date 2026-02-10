@@ -4,6 +4,12 @@ import { calcPlayerTotal } from '../core/engine/scoring';
 import Renderer from './render';
 import InputHandler from './input';
 import { addSingleScore, clearSingleLeaderboard, getSingleLeaderboard } from './scoreStorage';
+import { online2pConfig } from './online2pConfig'
+
+const WS_URL = online2pConfig.wsUrl
+const CLOUD_ENV_ID = online2pConfig.cloudEnvId
+const WS_SERVICE = online2pConfig.wsService
+const WS_PATH = online2pConfig.wsPath || '/ws'
 
 /**
  * 游戏主入口
@@ -50,6 +56,7 @@ export default class Main {
         confirmBackToMenuOpen: false,
         modeSelectOpen: false,
         onlineEntryOpen: false,
+        wsPrewarmAt: 0,
         leaderboardOpen: false,
         leaderboardFromGameEnd: false,
         leaderboardRecords: [],
@@ -59,6 +66,8 @@ export default class Main {
         leaderboardShownGameId: null,
         quickRefVisible: false,
         quickRefAnim: null,
+        scoreSummaryVisible: false,
+        scoreSummaryAnim: null,
         lobby: {
           roomId: '',
           room: null,
@@ -68,6 +77,8 @@ export default class Main {
           lastAnimatedRollAt: 0,
           pollEnabled: false,
           peerOnline: null,
+        lastPollErrorAt: 0,
+          pollBackoffMs: 0,
           creating: false,
           joining: false,
           starting: false,
@@ -77,6 +88,29 @@ export default class Main {
       };
 
       this.clientId = this.getClientId()
+      this.realtime = {
+        socketTask: null,
+        roomId: '',
+        connecting: false,
+        connected: false,
+        reconnectAttempt: 0,
+        reconnectTimer: null,
+        pendingConnectKey: '',
+        pullTimer: null,
+        lastNotifiedVersion: 0,
+        lastNotifiedUpdatedAt: 0,
+        lastAppliedVersion: 0,
+        expectedVersionMin: 0,
+        localActionInFlight: 0,
+        actionChain: null,
+        pendingHoldParity: null,
+        holdFlushTimer: null,
+        lastHoldTapAt: 0,
+        pendingVersion: 0,
+        pendingUpdatedAt: 0,
+        pullInFlight: false,
+        lastPullAt: 0
+      }
       
       // 动画状态
       this.animState = { active: false, startTime: 0, dice: [] };
@@ -122,6 +156,7 @@ export default class Main {
     this.updateAnimation();
     this.updateSingleLeaderboardAutoPopup();
     this.updateQuickRefAnimation();
+    this.updateScoreSummaryAnimation();
     this.updateLobbyPolling();
     this.updateOnlineGamePolling();
   }
@@ -159,6 +194,413 @@ export default class Main {
   normalizeRoomId(roomId) {
     if (typeof roomId !== 'string') return ''
     return roomId.trim().toUpperCase()
+  }
+
+  getOnlineIdentityForRoom(roomId) {
+    const rid = this.normalizeRoomId(roomId)
+    const lobby = this.ui && this.ui.lobby ? this.ui.lobby : null
+    if (!lobby || !rid) return { uid: '', name: '' }
+    if (this.normalizeRoomId(lobby.roomId) !== rid) return { uid: '', name: '' }
+    const seatIndex = lobby.self && typeof lobby.self.seatIndex === 'number' ? lobby.self.seatIndex : -1
+    const seats = lobby.room && Array.isArray(lobby.room.seats) ? lobby.room.seats : []
+    const seat = seatIndex >= 0 ? seats[seatIndex] : null
+    const uid = seat && typeof seat.uid === 'string' ? seat.uid : ''
+    const name = seat && typeof seat.name === 'string' ? seat.name : ''
+    return { uid, name, clientId: this.clientId || '' }
+  }
+
+  stopRoomRealtime() {
+    const rt = this.realtime
+    if (!rt) return
+    if (rt.reconnectTimer) {
+      clearTimeout(rt.reconnectTimer)
+      rt.reconnectTimer = null
+    }
+    if (rt.pullTimer) {
+      clearTimeout(rt.pullTimer)
+      rt.pullTimer = null
+    }
+    rt.reconnectAttempt = 0
+    rt.connecting = false
+    rt.connected = false
+    rt.roomId = ''
+    rt.pendingConnectKey = ''
+    rt.pendingVersion = 0
+    rt.pendingUpdatedAt = 0
+    rt.lastNotifiedVersion = 0
+    rt.lastNotifiedUpdatedAt = 0
+    rt.expectedVersionMin = 0
+    rt.localActionInFlight = 0
+    rt.actionChain = null
+    rt.pendingHoldParity = null
+    rt.lastHoldTapAt = 0
+    if (rt.holdFlushTimer) {
+      clearTimeout(rt.holdFlushTimer)
+      rt.holdFlushTimer = null
+    }
+    if (rt.socketTask) {
+      try {
+        rt.socketTask.close({ code: 1000, reason: 'leave' })
+      } catch (e) {
+        try {
+          rt.socketTask.close()
+        } catch (e2) {
+        }
+      }
+      rt.socketTask = null
+    }
+  }
+
+  scheduleRealtimeReconnect(roomId) {
+    const rt = this.realtime
+    if (!rt) return
+    if (rt.reconnectTimer) return
+    const rid = this.normalizeRoomId(roomId)
+    if (!rid) return
+    const attempt = Math.min(6, Math.max(0, rt.reconnectAttempt || 0))
+    const delay = Math.min(10000, 600 * Math.pow(2, attempt))
+    rt.reconnectTimer = setTimeout(() => {
+      rt.reconnectTimer = null
+      this.ensureRoomRealtime(rid)
+    }, delay)
+  }
+
+  ensureRoomRealtime(roomId) {
+    const rid = this.normalizeRoomId(roomId)
+    if (!rid) return
+    if (!wx) return
+
+    const lobby = this.ui && this.ui.lobby ? this.ui.lobby : null
+    if (!lobby || lobby.dismissed) return
+    if (!(this.screen === 'lobby' || (this.screen === 'game' && this.mode === 'online2p'))) return
+    if (this.normalizeRoomId(lobby.roomId) !== rid) return
+
+    const rt = this.realtime
+    if (!rt) return
+    if (rt.connected && rt.roomId === rid && rt.socketTask) return
+    if (rt.connecting && rt.roomId === rid) return
+
+    if (rt.socketTask) {
+      try {
+        rt.socketTask.close({ code: 1000, reason: 'switch' })
+      } catch (e) {
+      }
+      rt.socketTask = null
+    }
+
+    rt.roomId = rid
+    rt.connecting = true
+    rt.connected = false
+    rt.reconnectAttempt = rt.reconnectAttempt || 0
+    rt.pendingVersion = 0
+    rt.pendingUpdatedAt = 0
+    rt.lastNotifiedVersion = 0
+    rt.lastNotifiedUpdatedAt = 0
+    rt.expectedVersionMin = 0
+    rt.localActionInFlight = 0
+    rt.actionChain = null
+    rt.pendingHoldParity = null
+    rt.lastHoldTapAt = 0
+    if (rt.holdFlushTimer) {
+      clearTimeout(rt.holdFlushTimer)
+      rt.holdFlushTimer = null
+    }
+
+    const onCloseOrError = () => {
+      const lobby2 = this.ui && this.ui.lobby ? this.ui.lobby : null
+      if (!this.realtime) return
+      if (this.realtime.roomId !== rid) return
+      if (this.realtime.pendingConnectKey && this.realtime.pendingConnectKey !== connectKey) return
+      if (this.realtime.socketTask && this.realtime.socketTask !== taskRef.current) return
+      this.realtime.socketTask = null
+      this.realtime.connecting = false
+      this.realtime.connected = false
+      this.realtime.pendingConnectKey = ''
+      this.realtime.reconnectAttempt = (this.realtime.reconnectAttempt || 0) + 1
+      if (lobby2 && this.normalizeRoomId(lobby2.roomId) === rid && !lobby2.dismissed) {
+        lobby2.pollEnabled = true
+        this.scheduleRealtimeReconnect(rid)
+      }
+    }
+
+    const connectKey = `${rid}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`
+    rt.pendingConnectKey = connectKey
+
+    const taskRef = { current: null }
+
+    const bindTask = (task) => {
+      if (!task) return false
+      const lobby3 = this.ui && this.ui.lobby ? this.ui.lobby : null
+      if (!this.realtime || this.realtime.roomId !== rid) return false
+      if (!lobby3 || lobby3.dismissed) return false
+      if (this.realtime.pendingConnectKey !== connectKey) return false
+      this.realtime.socketTask = task
+      taskRef.current = task
+
+      task.onOpen(() => {
+        if (!this.realtime || this.realtime.socketTask !== task) return
+        const id = this.getOnlineIdentityForRoom(rid)
+        const payload = { type: 'subscribe', roomId: rid, uid: id.uid, name: id.name, clientId: id.clientId }
+        try {
+          task.send({ data: JSON.stringify(payload) })
+        } catch (e) {
+        }
+      })
+
+      task.onMessage((res) => {
+        const raw = res && res.data ? res.data : ''
+        let msg = null
+        try {
+          msg = typeof raw === 'string' ? JSON.parse(raw) : raw
+        } catch (e) {
+          msg = null
+        }
+        if (!msg || typeof msg.type !== 'string') return
+
+        if (msg.type === 'subscribed') {
+          if (!this.ui || !this.ui.lobby) return
+          if (this.normalizeRoomId(this.ui.lobby.roomId) !== rid) return
+          if (!this.realtime || this.realtime.socketTask !== task) return
+          this.realtime.connecting = false
+          this.realtime.connected = true
+          this.realtime.reconnectAttempt = 0
+          this.realtime.pendingConnectKey = ''
+          this.ui.lobby.pollEnabled = false
+          const hasRoom = !!(this.ui && this.ui.lobby && this.ui.lobby.room)
+          if (!hasRoom) this.schedulePullRoomStateFromWs(rid)
+          return
+        }
+
+        if (msg.type === 'roomUpdated') {
+          const msgRid = this.normalizeRoomId(msg.roomId)
+          if (!msgRid || msgRid !== rid) return
+          const incomingVersion = typeof msg.version === 'number' ? msg.version : 0
+          const incomingUpdatedAt = typeof msg.updatedAt === 'number' ? msg.updatedAt : 0
+          if (this.realtime) {
+            if (incomingVersion > 0) {
+              const currentVersion =
+                this.ui && this.ui.lobby && this.ui.lobby.room && typeof this.ui.lobby.room.gameVersion === 'number'
+                  ? this.ui.lobby.room.gameVersion
+                  : 0
+              if (currentVersion > 0 && incomingVersion <= currentVersion) {
+                if (incomingVersion > (this.realtime.lastNotifiedVersion || 0)) this.realtime.lastNotifiedVersion = incomingVersion
+                return
+              }
+              if (incomingVersion <= (this.realtime.lastNotifiedVersion || 0)) return
+              this.realtime.lastNotifiedVersion = incomingVersion
+              if ((this.realtime.localActionInFlight || 0) > 0) return
+            }
+            if (incomingUpdatedAt > 0) {
+              if (incomingUpdatedAt <= (this.realtime.lastNotifiedUpdatedAt || 0)) return
+              this.realtime.lastNotifiedUpdatedAt = incomingUpdatedAt
+            }
+            if (incomingVersion > (this.realtime.pendingVersion || 0)) this.realtime.pendingVersion = incomingVersion
+            if (incomingUpdatedAt > (this.realtime.pendingUpdatedAt || 0)) this.realtime.pendingUpdatedAt = incomingUpdatedAt
+          }
+          this.schedulePullRoomStateFromWs(rid)
+        }
+
+        if (msg.type === 'peerAction') {
+          const msgRid = this.normalizeRoomId(msg.roomId)
+          if (!msgRid || msgRid !== rid) return
+          this.applyPeerAction(msg)
+        }
+      })
+
+      task.onClose(onCloseOrError)
+      task.onError(onCloseOrError)
+      return true
+    }
+
+    const useContainer =
+      !!(wx.cloud && typeof wx.cloud.connectContainer === 'function' && CLOUD_ENV_ID && WS_SERVICE)
+
+    if (useContainer) {
+      let out = null
+      try {
+        out = wx.cloud.connectContainer({ config: { env: CLOUD_ENV_ID }, service: WS_SERVICE, path: WS_PATH })
+      } catch (e) {
+        out = null
+      }
+
+      if (out && typeof out.then === 'function') {
+        out
+          .then((res) => {
+            const task = res && res.socketTask ? res.socketTask : null
+            if (!bindTask(task)) onCloseOrError()
+          })
+          .catch(() => onCloseOrError())
+        return
+      }
+
+      if (out && out.socketTask) {
+        if (!bindTask(out.socketTask)) onCloseOrError()
+        return
+      }
+    }
+
+    if (typeof wx.connectSocket !== 'function') {
+      onCloseOrError()
+      return
+    }
+
+    const task = wx.connectSocket({ url: WS_URL })
+    bindTask(task)
+  }
+
+  schedulePullRoomStateFromWs(roomId) {
+    const rt = this.realtime
+    if (!rt) return
+    if (rt.pullTimer) return
+    const rid = this.normalizeRoomId(roomId)
+    if (!rid) return
+    const delay = (rt.localActionInFlight || 0) > 0 ? 350 : 120
+    rt.pullTimer = setTimeout(() => {
+      if (this.realtime) this.realtime.pullTimer = null
+      this.pullRoomStateFromWs(rid)
+    }, delay)
+  }
+
+  async pullRoomStateFromWs(roomId) {
+    if (!this.ui || !this.ui.lobby) return
+    const rid = this.normalizeRoomId(roomId)
+    if (!rid) return
+    if (this.normalizeRoomId(this.ui.lobby.roomId) !== rid) return
+
+    const rt = this.realtime
+    const now = Date.now()
+    if (rt.pullInFlight) return
+    if (now - (rt.lastPullAt || 0) < 250) return
+    rt.lastPullAt = now
+    rt.pullInFlight = true
+    try {
+      const result = await this.callCloudFunction('getRoomState', { roomId: rid, clientId: this.clientId })
+      this.applyRoomStateResult(rid, result)
+    } catch (e) {
+    } finally {
+      rt.pullInFlight = false
+    }
+  }
+
+  applyRoomStateResult(roomId, result) {
+    const rid = this.normalizeRoomId(roomId)
+    if (!rid) return
+    if (!this.ui || !this.ui.lobby) return
+    if (this.normalizeRoomId(this.ui.lobby.roomId) !== rid) return
+    const lobby = this.ui.lobby
+
+    if (result && result.ok === false) {
+      const code = result.code || ''
+      if (code === 'ROOM_NOT_FOUND') {
+        lobby.room = null
+        lobby.self = null
+        lobby.error = '房间已解散'
+        lobby.dismissed = true
+        this.stopRoomRealtime()
+        if (wx && typeof wx.showModal === 'function') {
+          wx.showModal({
+            title: '联机对战',
+            content: '房间已解散',
+            confirmText: '返回',
+            showCancel: false,
+            success: (res) => {
+              if (res && res.confirm) this.lobbyExit()
+            }
+          })
+        } else {
+          this.showBlockingError('房间已解散')
+          this.lobbyExit()
+        }
+        return
+      }
+      if (this.screen === 'lobby') {
+        lobby.error = result.message || '获取房间状态失败'
+      }
+      return
+    }
+
+    const prevRoom = lobby.room || null
+    let nextRoom = result && result.room ? result.room : null
+    const rt0 = this.realtime
+    const incomingVersion = nextRoom && typeof nextRoom.gameVersion === 'number' ? nextRoom.gameVersion : 0
+    if (rt0 && rt0.roomId === rid && rt0.expectedVersionMin > 0 && incomingVersion > 0 && incomingVersion < rt0.expectedVersionMin) {
+      if (prevRoom && prevRoom.gameState) {
+        nextRoom = { ...nextRoom, gameState: prevRoom.gameState, gameVersion: prevRoom.gameVersion }
+      }
+    }
+    lobby.room = nextRoom
+    if (result && result.self) lobby.self = result.self
+    if (lobby.error) lobby.error = ''
+
+    const rt = this.realtime
+    if (rt && rt.roomId === rid) {
+      const room = lobby.room || null
+      const v = room && typeof room.gameVersion === 'number' ? room.gameVersion : 0
+      if (v > 0) rt.lastAppliedVersion = v
+      if (rt.expectedVersionMin > 0 && v > 0 && v >= rt.expectedVersionMin) rt.expectedVersionMin = 0
+      if (rt.pendingVersion > 0 && rt.lastAppliedVersion >= rt.pendingVersion) rt.pendingVersion = 0
+      if (rt.pendingUpdatedAt > 0 && rt.lastNotifiedUpdatedAt >= rt.pendingUpdatedAt) rt.pendingUpdatedAt = 0
+    }
+
+    const seatIndex = lobby.self && typeof lobby.self.seatIndex === 'number' ? lobby.self.seatIndex : -1
+    if (lobby.room && Array.isArray(lobby.room.seats) && lobby.room.seats.length >= 2 && seatIndex >= 0) {
+      const peer = lobby.room.seats[seatIndex === 0 ? 1 : 0]
+      const nextPeerOnline = peer && peer.uid ? !!peer.online : null
+      const prevPeerOnline = lobby.peerOnline
+      if (prevPeerOnline !== nextPeerOnline && wx && typeof wx.showToast === 'function') {
+        if (typeof prevPeerOnline === 'boolean' && typeof nextPeerOnline === 'boolean') {
+          wx.showToast({ title: nextPeerOnline ? '对方已重连' : '对方已离线', icon: 'none' })
+        } else if (prevPeerOnline === true && nextPeerOnline === null) {
+          wx.showToast({ title: '对方已退出', icon: 'none' })
+        } else if (prevPeerOnline === null && nextPeerOnline === false) {
+          wx.showToast({ title: '对方已离线', icon: 'none' })
+        }
+      }
+      lobby.peerOnline = nextPeerOnline
+    }
+
+    if (this.screen === 'lobby') {
+      if (lobby.room && lobby.room.status === 'playing') {
+        if (seatIndex >= 0) {
+          this.startOnlineGameFromRoom(rid, lobby.room)
+        }
+      }
+      return
+    }
+
+    if (this.screen !== 'game' || this.mode !== 'online2p') return
+
+    if (seatIndex < 0) {
+      lobby.dismissed = true
+      this.stopRoomRealtime()
+      if (wx && typeof wx.showModal === 'function') {
+        wx.showModal({
+          title: '联机对战',
+          content: '你已不在房间中',
+          confirmText: '返回',
+          showCancel: false,
+          success: () => this.lobbyExit()
+        })
+      } else {
+        this.showBlockingError('你已不在房间中')
+        this.lobbyExit()
+      }
+      return
+    }
+
+    if (lobby.room && lobby.room.gameState) {
+      this.state = lobby.room.gameState
+      if (this.state && this.state.phase === 'GAME_END') {
+        lobby.pollEnabled = false
+        this.stopRoomRealtime()
+      }
+      const prevAnimated = typeof lobby.lastAnimatedRollAt === 'number' ? lobby.lastAnimatedRollAt : 0
+      const nextLastRollAt = this.state && this.state.turn && typeof this.state.turn.lastRollAt === 'number' ? this.state.turn.lastRollAt : 0
+      if (nextLastRollAt && nextLastRollAt !== prevAnimated) {
+        lobby.lastAnimatedRollAt = nextLastRollAt
+        if (!this.animState || !this.animState.active) this.startRollAnimation()
+      }
+    }
   }
 
   async callCloudFunction(name, data) {
@@ -228,22 +670,211 @@ export default class Main {
     return this.state && typeof this.state.currentPlayerIndex === 'number' && this.state.currentPlayerIndex === seatIndex
   }
 
-  async onlineAction(action, extra) {
+  async onlineAction(action, extra, options) {
     if (!this.ui || !this.ui.lobby) throw new Error('房间未就绪')
     const roomId = this.normalizeRoomId(this.ui.lobby.roomId)
     if (!roomId) throw new Error('房间未就绪')
     const payload = { roomId, clientId: this.clientId, debug: !!this.ui.dev, action, ...(extra || {}) }
-    const result = await this.callCloudFunction('onlineGameAction', payload)
-    if (result && result.ok === false) {
-      const msg = result.message || '操作失败'
-      wx.showToast({ title: msg, icon: 'none' })
-      throw new Error(msg)
+    const runOnce = async () => {
+      this.bumpExpectedVersionMin()
+      const rt = this.realtime
+      if (rt) rt.localActionInFlight = (rt.localActionInFlight || 0) + 1
+      let result = null
+      try {
+        result = await this.callCloudFunction('onlineGameAction', payload)
+      } finally {
+        if (rt) rt.localActionInFlight = Math.max(0, (rt.localActionInFlight || 0) - 1)
+      }
+      if (result && result.ok === false) {
+        const msg = result.message || '操作失败'
+        wx.showToast({ title: msg, icon: 'none' })
+        throw new Error(msg)
+      }
+      if (result && result.room) {
+        this.ui.lobby.room = result.room
+        if (result.room.gameState) this.state = result.room.gameState
+        const v = result.room && typeof result.room.gameVersion === 'number' ? result.room.gameVersion : 0
+        if (rt && v > 0) {
+          rt.lastAppliedVersion = v
+          if (rt.expectedVersionMin > 0 && v >= rt.expectedVersionMin) rt.expectedVersionMin = 0
+        }
+      }
+      return result
     }
-    if (result && result.room) {
-      this.ui.lobby.room = result.room
-      if (result.room.gameState) this.state = result.room.gameState
+
+    const rt = this.realtime
+    if (!rt) return runOnce()
+    if (options && options.bypassQueue) return runOnce()
+
+    const prev = rt.actionChain || Promise.resolve()
+    let resolveOut = null
+    let rejectOut = null
+    const out = new Promise((resolve, reject) => {
+      resolveOut = resolve
+      rejectOut = reject
+    })
+    rt.actionChain = prev
+      .catch(() => {})
+      .then(async () => {
+        try {
+          const res = await runOnce()
+          resolveOut(res)
+        } catch (e) {
+          rejectOut(e)
+        }
+      })
+    return out
+  }
+
+  applyOptimisticOnlineState(reducer) {
+    if (this.mode !== 'online2p') return null
+    const prev = this.state
+    if (!prev) return null
+    let next = null
+    try {
+      next = reducer(prev)
+    } catch (e) {
+      next = null
     }
-    return result
+    if (!next) return null
+    this.state = next
+    if (this.ui && this.ui.lobby && this.ui.lobby.room) {
+      this.ui.lobby.room.gameState = next
+    }
+    return () => {
+      if (this.mode !== 'online2p') return
+      this.state = prev
+      if (this.ui && this.ui.lobby && this.ui.lobby.room) {
+        this.ui.lobby.room.gameState = prev
+      }
+    }
+  }
+
+  sendPeerAction(action, payload) {
+    const lobby = this.ui && this.ui.lobby ? this.ui.lobby : null
+    const rid = this.normalizeRoomId(lobby && lobby.roomId)
+    if (!rid) return false
+    const rt = this.realtime
+    const task = rt && rt.socketTask ? rt.socketTask : null
+    if (!task || !rt || !rt.connected) return false
+    const seq = `${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`
+    try {
+      task.send({ data: JSON.stringify({ type: 'action', roomId: rid, action, payload: payload || null, seq }) })
+      return true
+    } catch (e) {
+      return false
+    }
+  }
+
+  bumpExpectedVersionMin() {
+    const rt = this.realtime
+    if (!rt) return
+    const lobby = this.ui && this.ui.lobby ? this.ui.lobby : null
+    const room = lobby && lobby.room ? lobby.room : null
+    const currentVersion = room && typeof room.gameVersion === 'number' ? room.gameVersion : 0
+    if (currentVersion <= 0) return
+    const next = currentVersion + 1
+    if (next > (rt.expectedVersionMin || 0)) rt.expectedVersionMin = next
+  }
+
+  scheduleFlushHoldToggles(roomId) {
+    const rt = this.realtime
+    if (!rt) return
+    const rid = this.normalizeRoomId(roomId)
+    if (!rid) return
+    if (rt.holdFlushTimer) return
+    rt.holdFlushTimer = setTimeout(() => {
+      if (!this.realtime) return
+      const rt2 = this.realtime
+      rt2.holdFlushTimer = null
+      const parity = Array.isArray(rt2.pendingHoldParity) ? rt2.pendingHoldParity : null
+      if (!parity || parity.length < 5) return
+      const indices = []
+      for (let i = 0; i < 5; i++) {
+        if (parity[i] % 2 === 1) indices.push(i)
+        parity[i] = 0
+      }
+      if (indices.length === 0) return
+      this.sendPeerAction('TOGGLE_HOLD_BATCH', { indices })
+      this.onlineAction('TOGGLE_HOLD_BATCH', { indices }, { bypassQueue: true }).catch(() => {
+        if (this.realtime) this.realtime.expectedVersionMin = 0
+        this.schedulePullRoomStateFromWs(rid)
+      })
+    }, 120)
+  }
+
+  applyPeerAction(msg) {
+    if (!msg || typeof msg.action !== 'string') return
+    if (msg.fromClientId && msg.fromClientId === this.clientId) return
+    const action = msg.action
+    const payload = msg && typeof msg.payload === 'object' ? msg.payload : null
+
+    if (this.screen !== 'game' || this.mode !== 'online2p') return
+    if (this.isOnlineMyTurn()) return
+
+    if (action === 'ROLL') {
+      const nextRollCount = this.state && this.state.turn && typeof this.state.turn.rollCount === 'number' ? this.state.turn.rollCount + 1 : 0
+      this.bumpExpectedVersionMin()
+      this.startRollAnimationAwaiting(nextRollCount)
+      return
+    }
+    if (action === 'TOGGLE_HOLD_BATCH') {
+      const indices = payload && Array.isArray(payload.indices) ? payload.indices : null
+      if (!indices) return
+      const parity = [0, 0, 0, 0, 0]
+      for (const v of indices) {
+        if (typeof v !== 'number' || v < 0 || v > 4) return
+        parity[v] += 1
+      }
+      this.bumpExpectedVersionMin()
+      for (let i = 0; i < 5; i++) {
+        if (parity[i] % 2 !== 1) continue
+        this.applyOptimisticOnlineState((s) => actionToggleHold(s, i))
+      }
+      return
+    }
+    if (action === 'TOGGLE_HOLD') {
+      const index = payload && typeof payload.index === 'number' ? payload.index : -1
+      if (index < 0 || index > 4) return
+      this.bumpExpectedVersionMin()
+      this.applyOptimisticOnlineState((s) => actionToggleHold(s, index))
+      return
+    }
+    if (action === 'STOP') {
+      this.bumpExpectedVersionMin()
+      this.applyOptimisticOnlineState((s) => actionStopRolling(s))
+      return
+    }
+    if (action === 'ENTER_SCORE') {
+      this.bumpExpectedVersionMin()
+      this.applyOptimisticOnlineState((s) => actionEnterScoreSelection(s))
+      return
+    }
+    if (action === 'CANCEL_SCORE') {
+      this.bumpExpectedVersionMin()
+      this.applyOptimisticOnlineState((s) => actionCancelScoreSelection(s))
+      return
+    }
+    if (action === 'APPLY_SCORE') {
+      const key = payload && typeof payload.key === 'string' ? payload.key : ''
+      if (!key) return
+      this.bumpExpectedVersionMin()
+      const out = actionApplyScore(this.state, key)
+      if (out && !out.error && out.state) {
+        this.state = out.state
+        if (this.ui && this.ui.lobby && this.ui.lobby.room) {
+          this.ui.lobby.room.gameState = out.state
+        }
+        if (this.state.phase === Phase.TURN_END) {
+          setTimeout(() => {
+            if (this.mode !== 'online2p') return
+            if (this.screen !== 'game') return
+            this.state = endTurnAndAdvance(this.state)
+            if (this.ui && this.ui.lobby && this.ui.lobby.room) this.ui.lobby.room.gameState = this.state
+          }, 1000)
+        }
+      }
+    }
   }
 
   handleLaunchOptions(options) {
@@ -261,6 +892,8 @@ export default class Main {
     if (this.ui.lobby.dismissed) return
     const roomId = this.normalizeRoomId(this.ui.lobby.roomId)
     if (!roomId) return
+    this.ui.lobby.pollEnabled = false
+    this.stopRoomRealtime()
     this.leaveRoom(roomId, false)
   }
 
@@ -281,6 +914,7 @@ export default class Main {
       }
     } catch (e) {
     }
+    this.ensureRoomRealtime(roomId)
   }
 
   enterLobby(roomId) {
@@ -298,6 +932,8 @@ export default class Main {
       lastAnimatedRollAt: 0,
       pollEnabled: true,
       peerOnline: null,
+      lastPollErrorAt: 0,
+      pollBackoffMs: 0,
       creating: false,
       joining: false,
       starting: false,
@@ -317,7 +953,25 @@ export default class Main {
     this.ui.leaderboardOpen = false
     this.ui.confirmClearLeaderboardOpen = false
     this.ui.onlineEntryOpen = true
+    this.prewarmWsServer()
     this.pressedKey = null
+  }
+
+  prewarmWsServer() {
+    if (!wx || !wx.cloud || typeof wx.cloud.callContainer !== 'function') return
+    if (!CLOUD_ENV_ID || !WS_SERVICE) return
+    const now = Date.now()
+    if (this.ui && typeof this.ui.wsPrewarmAt === 'number' && now - this.ui.wsPrewarmAt < 60000) return
+    if (this.ui) this.ui.wsPrewarmAt = now
+    try {
+      wx.cloud.callContainer({
+        config: { env: CLOUD_ENV_ID },
+        path: '/health',
+        method: 'GET',
+        header: { 'X-WX-SERVICE': WS_SERVICE }
+      }).catch(() => {})
+    } catch (e) {
+    }
   }
 
   closeOnlineEntry() {
@@ -376,6 +1030,8 @@ export default class Main {
       this.enterLobby(roomId)
       this.ui.lobby.room = result.room || null
       this.ui.lobby.self = result.self || { isOwner: true, seatIndex: 0 }
+      this.ui.lobby.pollEnabled = false
+      this.ensureRoomRealtime(roomId)
     } catch (e) {
       const msg = this.formatError(e)
       this.ui.lobby.error = msg
@@ -402,6 +1058,8 @@ export default class Main {
       this.ui.lobby.roomId = rid
       this.ui.lobby.room = result.room || null
       this.ui.lobby.self = result.self || null
+      this.ui.lobby.pollEnabled = false
+      this.ensureRoomRealtime(rid)
     } catch (e) {
       const msg = this.formatError(e)
       this.ui.lobby.error = msg
@@ -416,67 +1074,31 @@ export default class Main {
     if (!this.ui || !this.ui.lobby) return
     const lobby = this.ui.lobby
     if (lobby.dismissed) return
-    if (!lobby.pollEnabled) return
     const roomId = this.normalizeRoomId(lobby.roomId)
     if (!roomId) return
     const now = Date.now()
     if (lobby.pollInFlight) return
-    if (now - (lobby.lastPollAt || 0) < 1000) return
+    const rt = this.realtime
+    const wsConnected = !!(rt && rt.connected && this.normalizeRoomId(rt.roomId) === roomId)
+    const seats = lobby.room && Array.isArray(lobby.room.seats) ? lobby.room.seats : []
+    const waitingPeer = !(seats[0] && seats[0].uid && seats[1] && seats[1].uid)
+    const base = lobby.pollEnabled ? (waitingPeer ? 3000 : 2000) : (wsConnected ? (waitingPeer ? 8000 : 5000) : 2000)
+    const backoff = typeof lobby.pollBackoffMs === 'number' ? lobby.pollBackoffMs : 0
+    const interval = Math.max(base, backoff)
+    const wsConnecting = !!(rt && rt.connecting && this.normalizeRoomId(rt.roomId) === roomId)
+    if (!lobby.pollEnabled && wsConnected === false && !wsConnecting) lobby.pollEnabled = true
+    if (now - (lobby.lastPollAt || 0) < interval) return
 
     lobby.lastPollAt = now
     lobby.pollInFlight = true
     try {
       const result = await this.callCloudFunction('getRoomState', { roomId, clientId: this.clientId })
-      if (result && result.ok === false) {
-        const code = result.code || ''
-        if (code === 'ROOM_NOT_FOUND') {
-          this.ui.lobby.room = null
-          this.ui.lobby.self = null
-          this.ui.lobby.error = '房间已解散'
-          this.ui.lobby.dismissed = true
-          if (wx && typeof wx.showModal === 'function') {
-            wx.showModal({
-              title: '联机对战',
-              content: '房间已解散',
-              confirmText: '返回',
-              showCancel: false,
-              success: (res) => {
-                if (res && res.confirm) this.lobbyExit()
-              }
-            })
-          } else {
-            this.showBlockingError('房间已解散')
-            this.lobbyExit()
-          }
-          return
-        }
-        this.ui.lobby.error = result.message || '获取房间状态失败'
-        return
-      }
-      if (this.screen !== 'lobby') return
-      if (!this.ui || !this.ui.lobby) return
-      if (this.normalizeRoomId(this.ui.lobby.roomId) !== roomId) return
-      this.ui.lobby.room = result.room || null
-      if (result.self) this.ui.lobby.self = result.self
-      if (this.ui.lobby.error) this.ui.lobby.error = ''
-      const seatIndex = result.self && typeof result.self.seatIndex === 'number' ? result.self.seatIndex : -1
-      if (seatIndex >= 0 && result.room && Array.isArray(result.room.seats) && result.room.seats.length >= 2) {
-        const peer = result.room.seats[seatIndex === 0 ? 1 : 0]
-        const nextPeerOnline = peer && peer.uid ? !!peer.online : null
-        const prevPeerOnline = this.ui.lobby.peerOnline
-        if (typeof prevPeerOnline === 'boolean' && typeof nextPeerOnline === 'boolean' && prevPeerOnline !== nextPeerOnline) {
-          wx.showToast({ title: nextPeerOnline ? '对方已重连' : '对方已离线', icon: 'none' })
-        }
-        this.ui.lobby.peerOnline = nextPeerOnline
-      }
-      if (this.screen === 'lobby' && this.ui && this.ui.lobby && this.ui.lobby.room && this.ui.lobby.room.status === 'playing') {
-        const self = this.ui.lobby.self || {}
-        if (typeof self.seatIndex === 'number' && self.seatIndex >= 0) {
-          this.startOnlineGameFromRoom(roomId, this.ui.lobby.room)
-        }
-      }
+      this.applyRoomStateResult(roomId, result)
+      lobby.pollBackoffMs = 0
     } catch (e) {
       this.ui.lobby.error = this.formatError(e)
+      const prev = typeof lobby.pollBackoffMs === 'number' ? lobby.pollBackoffMs : 0
+      lobby.pollBackoffMs = prev > 0 ? Math.min(10000, prev * 2) : 1500
     } finally {
       if (this.ui && this.ui.lobby) this.ui.lobby.pollInFlight = false
     }
@@ -487,87 +1109,37 @@ export default class Main {
     if (this.mode !== 'online2p') return
     if (!this.ui || !this.ui.lobby) return
     const lobby = this.ui.lobby
-    if (!lobby.pollEnabled) return
+    if (lobby.dismissed) return
     const roomId = this.normalizeRoomId(lobby.roomId)
     if (!roomId) return
     const now = Date.now()
     if (lobby.pollInFlight) return
-    if (now - (lobby.lastPollAt || 0) < 800) return
+    const rt = this.realtime
+    const wsConnected = !!(rt && rt.connected && this.normalizeRoomId(rt.roomId) === roomId)
+    const myTurn = this.isOnlineMyTurn()
+    const base = lobby.pollEnabled ? (myTurn ? 1200 : 900) : (wsConnected ? (myTurn ? 6000 : 5000) : 900)
+    const backoff = typeof lobby.pollBackoffMs === 'number' ? lobby.pollBackoffMs : 0
+    const interval = Math.max(base, backoff)
+    const wsConnecting = !!(rt && rt.connecting && this.normalizeRoomId(rt.roomId) === roomId)
+    if (!lobby.pollEnabled && wsConnected === false && !wsConnecting) lobby.pollEnabled = true
+    if (now - (lobby.lastPollAt || 0) < interval) return
 
     lobby.lastPollAt = now
     lobby.pollInFlight = true
     try {
       const result = await this.callCloudFunction('getRoomState', { roomId, clientId: this.clientId })
-      if (result && result.ok === false) {
-        const code = result.code || ''
-        if (code === 'ROOM_NOT_FOUND') {
-          if (!lobby.dismissed) {
-            lobby.dismissed = true
-            if (wx && typeof wx.showModal === 'function') {
-              wx.showModal({
-                title: '联机对战',
-                content: '房间已解散',
-                confirmText: '返回',
-                showCancel: false,
-                success: (res) => {
-                  if (res && res.confirm) this.lobbyExit()
-                }
-              })
-            } else {
-              this.showBlockingError('房间已解散')
-              this.lobbyExit()
-            }
-          }
-          return
-        }
-        return
-      }
-
-      if (this.screen !== 'game' || this.mode !== 'online2p') return
-      if (!this.ui || !this.ui.lobby) return
-      if (this.normalizeRoomId(this.ui.lobby.roomId) !== roomId) return
-
-      this.ui.lobby.room = result.room || null
-      if (result.self) this.ui.lobby.self = result.self
-      const prevAnimated = typeof lobby.lastAnimatedRollAt === 'number' ? lobby.lastAnimatedRollAt : 0
-      if (result.room && result.room.gameState) {
-        this.state = result.room.gameState
-        if (this.state && this.state.phase === 'GAME_END') {
-          lobby.pollEnabled = false
-        }
-        const nextLastRollAt = this.state && this.state.turn && typeof this.state.turn.lastRollAt === 'number' ? this.state.turn.lastRollAt : 0
-        if (nextLastRollAt && nextLastRollAt !== prevAnimated) {
-          lobby.lastAnimatedRollAt = nextLastRollAt
-          this.startRollAnimation()
-        }
-      }
-      const seatIndex = result.self && typeof result.self.seatIndex === 'number' ? result.self.seatIndex : -1
-      if (seatIndex < 0) {
-        lobby.dismissed = true
-        if (wx && typeof wx.showModal === 'function') {
-          wx.showModal({
-            title: '联机对战',
-            content: '你已不在房间中',
-            confirmText: '返回',
-            showCancel: false,
-            success: () => this.lobbyExit()
-          })
-        } else {
-          this.showBlockingError('你已不在房间中')
-          this.lobbyExit()
-        }
-        return
-      }
-      if (result.room && Array.isArray(result.room.seats) && result.room.seats.length >= 2) {
-        const peer = result.room.seats[seatIndex === 0 ? 1 : 0]
-        const nextPeerOnline = peer && peer.uid ? !!peer.online : null
-        const prevPeerOnline = lobby.peerOnline
-        if (typeof prevPeerOnline === 'boolean' && typeof nextPeerOnline === 'boolean' && prevPeerOnline !== nextPeerOnline) {
-          wx.showToast({ title: nextPeerOnline ? '对方已重连' : '对方已离线', icon: 'none' })
-        }
-        lobby.peerOnline = nextPeerOnline
-      }
+      this.applyRoomStateResult(roomId, result)
+      lobby.pollBackoffMs = 0
     } catch (e) {
+      const msg = this.formatError(e)
+      lobby.error = msg
+      const prev = typeof lobby.pollBackoffMs === 'number' ? lobby.pollBackoffMs : 0
+      lobby.pollBackoffMs = prev > 0 ? Math.min(10000, prev * 2) : 1500
+      const lastErrAt = typeof lobby.lastPollErrorAt === 'number' ? lobby.lastPollErrorAt : 0
+      if (wx && typeof wx.showToast === 'function' && now - lastErrAt > 3000) {
+        lobby.lastPollErrorAt = now
+        wx.showToast({ title: '网络异常', icon: 'none' })
+      }
     } finally {
       if (this.ui && this.ui.lobby) this.ui.lobby.pollInFlight = false
     }
@@ -626,6 +1198,7 @@ export default class Main {
 
   lobbyExit() {
     const roomId = this.ui && this.ui.lobby ? this.normalizeRoomId(this.ui.lobby.roomId) : ''
+    this.stopRoomRealtime()
     if (roomId) this.leaveRoom(roomId, true)
     this.goMenu()
     if (this.ui && this.ui.lobby) {
@@ -638,6 +1211,8 @@ export default class Main {
         lastAnimatedRollAt: 0,
         pollEnabled: false,
         peerOnline: null,
+        lastPollErrorAt: 0,
+        pollBackoffMs: 0,
         creating: false,
         joining: false,
         starting: false,
@@ -763,6 +1338,71 @@ export default class Main {
     }
   }
 
+  openScoreSummary() {
+    if (this.ui.scoreSummaryVisible && this.ui.scoreSummaryAnim && this.ui.scoreSummaryAnim.type === 'opening') return
+    this.ui.scoreSummaryVisible = true
+    this.ui.scoreSummaryAnim = {
+      type: 'opening',
+      startTime: Date.now(),
+      openDuration: 160,
+      closeDuration: 120,
+      maskAlpha: 0,
+      cardAlpha: 0,
+      cardScale: 0.98
+    }
+    this.pressedKey = null
+  }
+
+  closeScoreSummary() {
+    if (!this.ui.scoreSummaryVisible) return
+    const now = Date.now()
+    const current = this.ui.scoreSummaryAnim || {}
+    this.ui.scoreSummaryAnim = {
+      ...current,
+      type: 'closing',
+      startTime: now,
+      closeDuration: 120,
+      maskAlpha: typeof current.maskAlpha === 'number' ? current.maskAlpha : 0.58,
+      cardAlpha: typeof current.cardAlpha === 'number' ? current.cardAlpha : 1,
+      cardScale: 1
+    }
+    this.pressedKey = null
+  }
+
+  updateScoreSummaryAnimation() {
+    if (!this.ui.scoreSummaryVisible) return
+    if (!this.ui.scoreSummaryAnim) return
+
+    const now = Date.now()
+    const anim = this.ui.scoreSummaryAnim
+
+    if (anim.type === 'opening') {
+      const t = (now - anim.startTime) / (anim.openDuration || 160)
+      const p = this.easeOut(t)
+      this.ui.scoreSummaryAnim.maskAlpha = 0.58 * p
+      this.ui.scoreSummaryAnim.cardAlpha = p
+      this.ui.scoreSummaryAnim.cardScale = 0.98 + 0.02 * p
+      if (t >= 1) {
+        this.ui.scoreSummaryAnim.type = 'open'
+      }
+      return
+    }
+
+    if (anim.type === 'closing') {
+      const t = (now - anim.startTime) / (anim.closeDuration || 120)
+      const p = this.easeOut(t)
+      const startMask = typeof anim.maskAlpha === 'number' ? anim.maskAlpha : 0.58
+      const startAlpha = typeof anim.cardAlpha === 'number' ? anim.cardAlpha : 1
+      this.ui.scoreSummaryAnim.maskAlpha = startMask * (1 - p)
+      this.ui.scoreSummaryAnim.cardAlpha = startAlpha * (1 - p)
+      this.ui.scoreSummaryAnim.cardScale = 1 - 0.02 * p
+      if (t >= 1) {
+        this.ui.scoreSummaryVisible = false
+        this.ui.scoreSummaryAnim = null
+      }
+    }
+  }
+
   updateSingleLeaderboardAutoPopup() {
     if (!this.state || this.state.phase !== Phase.GAME_END) return;
     if (this.mode !== 'single') return;
@@ -806,6 +1446,16 @@ export default class Main {
        }));
     }
 
+    const awaitingRollCount =
+      this.mode === 'online2p' &&
+      this.animState &&
+      typeof this.animState.awaitingRollCount === 'number' &&
+      this.animState.awaitingRollCount > 0 &&
+      this.state &&
+      this.state.turn &&
+      typeof this.state.turn.rollCount === 'number' &&
+      this.state.turn.rollCount < this.animState.awaitingRollCount
+
     this.animState.dice.forEach((d, i) => {
         // 如果被保留，则不播放动画
         if (this.state.turn.held[i]) {
@@ -820,7 +1470,7 @@ export default class Main {
         // 2. 整个动画结束时间点 (All Done)
         const endTime = stopTime + settleTime;
 
-        if (elapsed >= endTime) {
+        if (elapsed >= endTime && !awaitingRollCount) {
             // 动画彻底结束，显示真值，归位
             d.val = this.state.turn.dice[i];
             d.offsetX = 0; d.offsetY = 0; d.rotation = 0; d.scale = 1;
@@ -829,7 +1479,7 @@ export default class Main {
         
         allFinished = false;
         
-        if (elapsed < stopTime) {
+        if (elapsed < stopTime || awaitingRollCount) {
             // 阶段一：混乱旋转期 (Cover Up)
             // 即使是第5个骰子，也是从 0ms 就开始转，直到 stopTime
             
@@ -869,6 +1519,7 @@ export default class Main {
     
     if (allFinished) {
         this.animState.active = false;
+        this.animState.awaitingRollCount = 0
         
         // 动画结束，检查是否需要自动进入选分阶段
         if (this.mode !== 'online2p') {
@@ -883,14 +1534,18 @@ export default class Main {
             if (this.ui.lobby.enterScoreInFlight) return
             if (!this.isOnlineMyTurn()) return
             this.ui.lobby.enterScoreInFlight = true
+            this.bumpExpectedVersionMin()
+            const rollback = this.applyOptimisticOnlineState((s) => actionEnterScoreSelection(s))
             setTimeout(async () => {
               try {
+                this.sendPeerAction('ENTER_SCORE', null)
                 await this.onlineAction('ENTER_SCORE')
               } catch (e) {
+                if (rollback) rollback()
               } finally {
                 if (this.ui && this.ui.lobby) this.ui.lobby.enterScoreInFlight = false
               }
-            }, 350)
+            }, 0)
           }
         }
     }
@@ -944,6 +1599,7 @@ export default class Main {
     this.ui.confirmBackToMenuOpen = false;
     if (this.mode === 'online2p') {
       const roomId = this.ui && this.ui.lobby ? this.normalizeRoomId(this.ui.lobby.roomId) : ''
+      this.stopRoomRealtime()
       if (roomId) this.leaveRoom(roomId, true)
       if (this.ui && this.ui.lobby) {
         this.ui.lobby.pollEnabled = false
@@ -1013,6 +1669,7 @@ export default class Main {
       this.ui.lobby.lastAnimatedRollAt = last
       this.ui.lobby.pollEnabled = true
     }
+    this.ensureRoomRealtime(roomId)
     this.animState.active = false
   }
 
@@ -1086,14 +1743,20 @@ export default class Main {
         wx.showToast({ title: '等待对方操作', icon: 'none' })
         return
       }
+      const nextRollCount = this.state && this.state.turn && typeof this.state.turn.rollCount === 'number' ? this.state.turn.rollCount + 1 : 0
+      this.sendPeerAction('ROLL', null)
+      this.bumpExpectedVersionMin()
+      this.startRollAnimationAwaiting(nextRollCount)
       this.onlineAction('ROLL')
         .then(() => {
           if (this.ui && this.ui.lobby && this.state && this.state.turn && typeof this.state.turn.lastRollAt === 'number') {
             this.ui.lobby.lastAnimatedRollAt = this.state.turn.lastRollAt
           }
-          this.startRollAnimation()
         })
-        .catch(() => {})
+        .catch(() => {
+          this.animState.active = false
+          this.animState.awaitingRollCount = 0
+        })
       return
     }
     this.state = actionRoll(this.state)
@@ -1104,12 +1767,26 @@ export default class Main {
     this.animState = {
         active: true,
         startTime: Date.now(),
+        awaitingRollCount: 0,
         // duration 已不再是固定值，由 updateAnimation 内部计算
         dice: Array(5).fill(0).map((_, i) => ({
             val: this.state.turn.dice[i], 
             offsetX: 0, offsetY: 0, rotation: 0, scale: 1
         }))
     };
+  }
+
+  startRollAnimationAwaiting(nextRollCount) {
+    const target = typeof nextRollCount === 'number' ? nextRollCount : 0
+    this.animState = {
+      active: true,
+      startTime: Date.now(),
+      awaitingRollCount: target > 0 ? target : 0,
+      dice: Array(5).fill(0).map((_, i) => ({
+        val: this.state && this.state.turn && Array.isArray(this.state.turn.dice) ? this.state.turn.dice[i] : 1,
+        offsetX: 0, offsetY: 0, rotation: 0, scale: 1
+      }))
+    }
   }
   
   handleToggleHold(diceIndex) {
@@ -1119,7 +1796,24 @@ export default class Main {
         wx.showToast({ title: '等待对方操作', icon: 'none' })
         return
       }
-      this.onlineAction('TOGGLE_HOLD', { index: diceIndex }).catch(() => {})
+      const lobby = this.ui && this.ui.lobby ? this.ui.lobby : null
+      const rid = this.normalizeRoomId(lobby && lobby.roomId)
+      if (!rid) return
+      if (typeof diceIndex !== 'number' || diceIndex < 0 || diceIndex > 4) return
+      const rt = this.realtime
+      const now = Date.now()
+      if (rt) {
+        const last = typeof rt.lastHoldTapAt === 'number' ? rt.lastHoldTapAt : 0
+        if (now - last < 30) return
+        rt.lastHoldTapAt = now
+        if (!Array.isArray(rt.pendingHoldParity) || rt.pendingHoldParity.length < 5) {
+          rt.pendingHoldParity = [0, 0, 0, 0, 0]
+        }
+        rt.pendingHoldParity[diceIndex] = (rt.pendingHoldParity[diceIndex] || 0) + 1
+      }
+      this.bumpExpectedVersionMin()
+      this.applyOptimisticOnlineState((s) => actionToggleHold(s, diceIndex))
+      this.scheduleFlushHoldToggles(rid)
       return
     }
     this.state = actionToggleHold(this.state, diceIndex)
@@ -1132,7 +1826,12 @@ export default class Main {
         wx.showToast({ title: '等待对方操作', icon: 'none' })
         return
       }
-      this.onlineAction('STOP').catch(() => {})
+      this.bumpExpectedVersionMin()
+      const rollback = this.applyOptimisticOnlineState((s) => actionStopRolling(s))
+      this.sendPeerAction('STOP', null)
+      this.onlineAction('STOP').catch(() => {
+        if (rollback) rollback()
+      })
       return
     }
     this.state = actionStopRolling(this.state)
@@ -1145,7 +1844,12 @@ export default class Main {
         wx.showToast({ title: '等待对方操作', icon: 'none' })
         return
       }
-      this.onlineAction('CANCEL_SCORE').catch(() => {})
+      this.bumpExpectedVersionMin()
+      const rollback = this.applyOptimisticOnlineState((s) => actionCancelScoreSelection(s))
+      this.sendPeerAction('CANCEL_SCORE', null)
+      this.onlineAction('CANCEL_SCORE').catch(() => {
+        if (rollback) rollback()
+      })
       return
     }
     this.state = actionCancelScoreSelection(this.state)
@@ -1158,7 +1862,16 @@ export default class Main {
         wx.showToast({ title: '等待对方操作', icon: 'none' })
         return
       }
-      this.onlineAction('APPLY_SCORE', { key }).catch(() => {})
+      this.bumpExpectedVersionMin()
+      const rollback = this.applyOptimisticOnlineState((s) => {
+        const out = actionApplyScore(s, key)
+        if (out && out.error) throw new Error(out.error)
+        return out && out.state ? out.state : s
+      })
+      this.sendPeerAction('APPLY_SCORE', { key })
+      this.onlineAction('APPLY_SCORE', { key }).catch(() => {
+        if (rollback) rollback()
+      })
       return
     }
     const result = actionApplyScore(this.state, key)

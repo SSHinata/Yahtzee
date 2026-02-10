@@ -5,6 +5,8 @@ try {
   cloud = null
 }
 
+const https = require('https')
+
 let db = null
 if (cloud) {
   cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
@@ -64,6 +66,45 @@ function createInitialGameState(roomId, seats) {
   }
 }
 
+function notifyRoomUpdated(roomId, extra) {
+  const cfg = require('./notifyConfig')
+  const base = process.env.WS_NOTIFY_BASE || process.env.NOTIFY_BASE || (cfg && cfg.notifyBase) || 'https://ws-server-224791-6-1402157537.sh.run.tcloudbase.com'
+  const url = new URL('/notify', base)
+  const token = process.env.WS_NOTIFY_TOKEN || process.env.NOTIFY_TOKEN || (cfg && cfg.notifyToken) || ''
+  const payload = { roomId, ...(extra || {}) }
+  if (token) payload.token = token
+  const body = JSON.stringify(payload)
+  const headers = {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(body)
+  }
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  return new Promise((resolve) => {
+    const req = https.request(
+      {
+        method: 'POST',
+        hostname: url.hostname,
+        path: url.pathname,
+        port: url.port ? Number(url.port) : 443,
+        headers,
+        timeout: 800
+      },
+      (res) => {
+        res.on('data', () => {})
+        res.on('end', () => resolve(true))
+      }
+    )
+    req.on('timeout', () => {
+      req.destroy()
+      resolve(false)
+    })
+    req.on('error', () => resolve(false))
+    req.write(body)
+    req.end()
+  })
+}
+
 exports.main = async (event) => {
   try {
     if (!cloud || !db) throw err('MISSING_DEP', '缺少依赖 wx-server-sdk，请重新部署云函数并安装依赖')
@@ -101,6 +142,8 @@ exports.main = async (event) => {
 
     const seats = Array.isArray(room.seats) ? room.seats : []
     const seatIndex = Array.isArray(seats) ? seats.findIndex((s) => s && s.clientId === clientId) : -1
+    const version = typeof room.gameVersion === 'number' ? room.gameVersion : null
+    await notifyRoomUpdated(roomId, { version: version || null, updatedAt: Date.now() }).catch(() => {})
     return { ok: true, roomId, room, self: { isOwner: seatIndex === 0, seatIndex } }
   } catch (e) {
     return {

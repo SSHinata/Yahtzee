@@ -128,6 +128,7 @@ export default class Renderer {
       confirmClearCancel: null, // {x, y, w, h}
       confirmClearConfirm: null, // {x, y, w, h}
       btnScoreQuickRef: null, // {x, y, w, h}
+      btnScoreSummary: null, // {x, y, w, h}
       btnLobbyShare: null,
       btnLobbyStart: null,
       btnLobbyExit: null,
@@ -136,7 +137,9 @@ export default class Renderer {
       btnOnlineJoin: null,
       btnOnlineEntryCancel: null,
       quickRefBackdrop: null, // {x, y, w, h}
-      quickRefCard: null // {x, y, w, h}
+      quickRefCard: null, // {x, y, w, h}
+      scoreSummaryBackdrop: null, // {x, y, w, h}
+      scoreSummaryCard: null // {x, y, w, h}
     };
     this.pressed = null;
   }
@@ -190,6 +193,7 @@ export default class Renderer {
     this.hitRegions.confirmClearCancel = null;
     this.hitRegions.confirmClearConfirm = null;
     this.hitRegions.btnScoreQuickRef = null;
+    this.hitRegions.btnScoreSummary = null;
     this.hitRegions.btnLobbyShare = null;
     this.hitRegions.btnLobbyStart = null;
     this.hitRegions.btnLobbyExit = null;
@@ -199,6 +203,8 @@ export default class Renderer {
     this.hitRegions.btnOnlineEntryCancel = null;
     this.hitRegions.quickRefBackdrop = null;
     this.hitRegions.quickRefCard = null;
+    this.hitRegions.scoreSummaryBackdrop = null;
+    this.hitRegions.scoreSummaryCard = null;
     this.hitRegions.btnStartGameRule = null;
   }
 
@@ -2078,11 +2084,48 @@ export default class Renderer {
     // 底部总分显示在标题栏右侧？或者列表底部？
     // 放在标题栏右侧比较省空间
     const totalScore = calcPlayerTotal(state.players[state.currentPlayerIndex]);
+    const totalText = `总分: ${totalScore}`
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = C.primary;
     ctx.font = 'bold 16px sans-serif';
-    ctx.fillText(`总分: ${totalScore}`, cardX + cardW - 20, cardY + 20);
+    const totalX = cardX + cardW - 20
+    const totalW = ctx.measureText(totalText).width
+    const totalLeftX = totalX - totalW
+
+    const sumKey = 'btnScoreSummary'
+    const sumPressed = this.pressed === sumKey
+    const sumR = 10
+    const sumGap = 4
+    const sumX = totalLeftX - sumGap - sumR
+    const sumY = cardY + 20
+
+    ctx.save()
+    if (sumPressed) {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.06)'
+      ctx.beginPath()
+      ctx.arc(sumX, sumY, sumR, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    ctx.strokeStyle = '#6B7280'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.arc(sumX, sumY, sumR, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.fillStyle = '#6B7280'
+    ctx.font = 'bold 14px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('!', sumX, sumY + 0.5)
+    ctx.restore()
+
+    this.hitRegions.btnScoreSummary = { x: sumX - 16, y: sumY - 16, w: 32, h: 32 }
+
+    ctx.textAlign = 'right'
+    ctx.textBaseline = 'middle'
+    ctx.fillStyle = C.primary
+    ctx.font = 'bold 16px sans-serif'
+    ctx.fillText(totalText, totalX, cardY + 20)
   }
 
   renderGame(state, ui, animState) {
@@ -2122,6 +2165,100 @@ export default class Renderer {
     if (ui && ui.quickRefVisible) {
       this.drawScoreQuickRefModal(ui);
     }
+
+    if (ui && ui.scoreSummaryVisible) {
+      this.drawScoreSummaryModal(state, ui);
+    }
+  }
+
+  drawScoreSummaryModal(state, ui) {
+    const ctx = this.ctx
+    const C = this.COLORS
+    const anim = ui && ui.scoreSummaryAnim ? ui.scoreSummaryAnim : null
+    const maskAlpha = anim && typeof anim.maskAlpha === 'number' ? anim.maskAlpha : 0.58
+    const cardAlpha = anim && typeof anim.cardAlpha === 'number' ? anim.cardAlpha : 1
+    const cardScale = anim && typeof anim.cardScale === 'number' ? anim.cardScale : 1
+
+    ctx.save()
+    ctx.fillStyle = `rgba(17, 24, 39, ${maskAlpha})`
+    ctx.fillRect(0, 0, this.width, this.height)
+    ctx.restore()
+
+    this.hitRegions.scoreSummaryBackdrop = { x: 0, y: 0, w: this.width, h: this.height }
+
+    const players = state && Array.isArray(state.players) ? state.players : []
+    const rows = players.map((p, idx) => ({
+      idx,
+      name: p && p.name ? p.name : `玩家${idx + 1}`,
+      total: p ? calcPlayerTotal(p) : 0
+    }))
+
+    const maxCardW = Math.min(420, this.width * 0.86)
+    const cardW = Math.max(280, Math.min(maxCardW, this.width - 40))
+    const rowH = 44
+    const titleH = 54
+    const paddingBottom = 18
+    const cardH = Math.min(Math.floor(this.height * 0.7), titleH + rowH * Math.max(2, rows.length) + paddingBottom)
+    const cardX = (this.width - cardW) / 2
+    const cardY = (this.height - cardH) / 2
+    const cx = cardX + cardW / 2
+    const cy = cardY + cardH / 2
+
+    ctx.save()
+    ctx.globalAlpha = cardAlpha
+    ctx.translate(cx, cy)
+    ctx.scale(cardScale, cardScale)
+    ctx.translate(-cx, -cy)
+
+    ctx.save()
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.10)'
+    ctx.shadowBlur = 22
+    ctx.shadowOffsetY = 10
+    ctx.fillStyle = '#FFFFFF'
+    this.drawRoundedRect(cardX, cardY, cardW, cardH, 22)
+    ctx.fill()
+    ctx.restore()
+
+    ctx.fillStyle = C.text
+    ctx.font = 'bold 20px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'top'
+    ctx.fillText('比分一览', cardX + cardW / 2, cardY + 16)
+
+    const seatIndex = ui && ui.lobby && ui.lobby.self && typeof ui.lobby.self.seatIndex === 'number' ? ui.lobby.self.seatIndex : -1
+    const cur = typeof state.currentPlayerIndex === 'number' ? state.currentPlayerIndex : -1
+    let y = cardY + titleH
+    for (let i = 0; i < rows.length; i += 1) {
+      const r = rows[i]
+      const isMe = seatIndex >= 0 && r.idx === seatIndex
+      const isTurn = cur >= 0 && r.idx === cur
+
+      const rowX = cardX + 18
+      const rowW = cardW - 36
+      const pressed = false
+      ctx.save()
+      ctx.fillStyle = isMe ? '#EFF6FF' : '#F9FAFB'
+      this.drawRoundedRect(rowX, y, rowW, rowH - 10, 14)
+      ctx.fill()
+      ctx.restore()
+
+      ctx.fillStyle = C.text
+      ctx.font = isMe ? 'bold 16px sans-serif' : '16px sans-serif'
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'middle'
+      const suffix = isTurn ? '（回合中）' : ''
+      ctx.fillText(`${r.name}${suffix}`, rowX + 14, y + (rowH - 10) / 2)
+
+      ctx.textAlign = 'right'
+      ctx.fillStyle = isTurn ? C.primary : C.text
+      ctx.font = 'bold 16px sans-serif'
+      ctx.fillText(`${r.total} 分`, rowX + rowW - 14, y + (rowH - 10) / 2)
+
+      y += rowH
+    }
+
+    this.hitRegions.scoreSummaryCard = { x: cardX, y: cardY, w: cardW, h: cardH }
+    ctx.restore()
   }
   
   drawOverlay(title, subTitle) {

@@ -5,6 +5,8 @@ try {
   cloud = null
 }
 
+const https = require('https')
+
 let db = null
 if (cloud) {
   cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
@@ -74,6 +76,45 @@ function ensureSeats(input) {
   })
 }
 
+function notifyRoomUpdated(roomId, extra) {
+  const cfg = require('./notifyConfig')
+  const base = process.env.WS_NOTIFY_BASE || process.env.NOTIFY_BASE || (cfg && cfg.notifyBase) || 'https://ws-server-224791-6-1402157537.sh.run.tcloudbase.com'
+  const url = new URL('/notify', base)
+  const token = process.env.WS_NOTIFY_TOKEN || process.env.NOTIFY_TOKEN || (cfg && cfg.notifyToken) || ''
+  const payload = { roomId, ...(extra || {}) }
+  if (token) payload.token = token
+  const body = JSON.stringify(payload)
+  const headers = {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(body)
+  }
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  return new Promise((resolve) => {
+    const req = https.request(
+      {
+        method: 'POST',
+        hostname: url.hostname,
+        path: url.pathname,
+        port: url.port ? Number(url.port) : 443,
+        headers,
+        timeout: 800
+      },
+      (res) => {
+        res.on('data', () => {})
+        res.on('end', () => resolve(true))
+      }
+    )
+    req.on('timeout', () => {
+      req.destroy()
+      resolve(false)
+    })
+    req.on('error', () => resolve(false))
+    req.write(body)
+    req.end()
+  })
+}
+
 exports.main = async (event) => {
   try {
     if (!cloud || !db) throw err('MISSING_DEP', '缺少依赖 wx-server-sdk，请重新部署云函数并安装依赖')
@@ -102,10 +143,13 @@ exports.main = async (event) => {
 
       const seats = ensureSeats(data.seats)
       const existingIndex = clientId ? seats.findIndex((s) => s && s.clientId === clientId) : -1
-      const existingByUidIndex = seats.findIndex((s) => s && s.uid === uid)
+      const uidMatchIndices = seats.map((s, idx) => (s && s.uid === uid ? idx : -1)).filter((idx) => idx >= 0)
+      const existingByUidIndex = uidMatchIndices.length > 0 ? uidMatchIndices[0] : -1
 
       if (existingIndex >= 0) {
         seatIndex = existingIndex
+        const existingSeat = seats[existingIndex]
+        if (existingSeat && existingSeat.uid && existingSeat.uid !== uid) throw err('FORBIDDEN', '身份校验失败')
         const nextSeats = seats.map((s, idx) => {
           if (!s) return s
           if (idx !== existingIndex) return s
@@ -136,6 +180,29 @@ exports.main = async (event) => {
           return updated.data
         }
         throw err('ROOM_NOT_WAITING', '房间已开始或不可加入')
+      }
+
+      if (debug && uidMatchIndices.length > 1 && clientId) {
+        const reclaimIndex = uidMatchIndices.find((idx) => {
+          const s = seats[idx]
+          if (!s) return false
+          if (!s.uid) return false
+          if (s.clientId && s.clientId === clientId) return true
+          if (!s.online) return true
+          if (!s.clientId) return true
+          return false
+        })
+        if (typeof reclaimIndex === 'number' && reclaimIndex >= 0) {
+          seatIndex = reclaimIndex
+          const nextSeats = seats.map((s, idx) => {
+            if (!s) return s
+            if (idx !== reclaimIndex) return s
+            return { ...s, clientId: (clientId || s.clientId || null), online: true }
+          })
+          await ref.update({ data: { seats: nextSeats, updatedAt: now } })
+          const updated = await ref.get()
+          return updated.data
+        }
       }
 
       if (existingByUidIndex >= 0 && debug) {
@@ -212,6 +279,7 @@ exports.main = async (event) => {
     })
 
     isOwner = seatIndex === 0
+    await notifyRoomUpdated(roomId, { updatedAt: Date.now() }).catch(() => {})
     return { ok: true, roomId, room, self: { isOwner, seatIndex } }
   } catch (e) {
     return {

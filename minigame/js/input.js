@@ -54,6 +54,8 @@ export default class InputHandler {
       }
     } else if (this.main.ui && this.main.ui.quickRefVisible) {
       keys.push('quickRefCard', 'quickRefBackdrop');
+    } else if (this.main.ui && this.main.ui.scoreSummaryVisible) {
+      keys.push('scoreSummaryCard', 'scoreSummaryBackdrop');
     } else if (s === 'lobby') {
       keys.push('btnLobbyShare', 'btnLobbyStart', 'btnLobbyExit');
     } else if (s === 'menu') {
@@ -114,6 +116,8 @@ export default class InputHandler {
         else if (key === 'btnLeaderboardBackToMenu') this.main.backToMenuFromLeaderboard();
         else if (key === 'quickRefCard') {}
         else if (key === 'quickRefBackdrop') this.main.closeQuickRef();
+        else if (key === 'scoreSummaryCard') {}
+        else if (key === 'scoreSummaryBackdrop') this.main.closeScoreSummary();
         else if (key === 'btnOnlineCreate') this.main.onlineEntryCreateRoom();
         else if (key === 'btnOnlineJoin') this.main.onlineEntryJoinRoom();
         else if (key === 'btnOnlineEntryCancel' || key === 'onlineEntryBackdrop') this.main.closeOnlineEntry();
@@ -287,6 +291,11 @@ export default class InputHandler {
     if (regions.btnScoreQuickRef && this.isHit(x, y, regions.btnScoreQuickRef)) {
       this.main.openQuickRef();
       return;
+    }
+
+    if (regions.btnScoreSummary && this.isHit(x, y, regions.btnScoreSummary)) {
+      this.main.openScoreSummary();
+      return
     }
     
     if (regions.btnLeaderboardGame && this.isHit(x, y, regions.btnLeaderboardGame)) {

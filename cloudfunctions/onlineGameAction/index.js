@@ -5,6 +5,8 @@ try {
   cloud = null
 }
 
+const https = require('https')
+
 let db = null
 if (cloud) {
   cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
@@ -43,6 +45,73 @@ function normalizeDebug(v) {
     if (s === '0' || s === 'false' || s === 'no') return false
   }
   return false
+}
+
+function notifyRoomUpdated(roomId, extra) {
+  const cfg = require('./notifyConfig')
+  const base = process.env.WS_NOTIFY_BASE || process.env.NOTIFY_BASE || (cfg && cfg.notifyBase) || 'https://ws-server-224791-6-1402157537.sh.run.tcloudbase.com'
+  const url = new URL('/notify', base)
+  const token = process.env.WS_NOTIFY_TOKEN || process.env.NOTIFY_TOKEN || (cfg && cfg.notifyToken) || ''
+  const payload = { roomId, ...(extra || {}) }
+  if (token) payload.token = token
+  const body = JSON.stringify(payload)
+  const headers = {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(body)
+  }
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  return new Promise((resolve) => {
+    const req = https.request(
+      {
+        method: 'POST',
+        hostname: url.hostname,
+        path: url.pathname,
+        port: url.port ? Number(url.port) : 443,
+        headers,
+        timeout: 800
+      },
+      (res) => {
+        res.on('data', () => {})
+        res.on('end', () => resolve(true))
+      }
+    )
+    req.on('timeout', () => {
+      req.destroy()
+      resolve(false)
+    })
+    req.on('error', () => resolve(false))
+    req.write(body)
+    req.end()
+  })
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function isTransientDbError(e) {
+  const code = e && (e.errCode || e.errCode === 0 ? e.errCode : null)
+  if (code === -501001 || code === 501001) return true
+  const msg = e && (e.message || e.errMsg) ? String(e.message || e.errMsg) : ''
+  if (msg && msg.toLowerCase().includes('resource system')) return true
+  return false
+}
+
+async function runWithRetry(fn, maxAttempts) {
+  const tries = Math.max(1, Number(maxAttempts) || 1)
+  for (let i = 0; i < tries; i += 1) {
+    try {
+      return await fn()
+    } catch (e) {
+      const isLast = i === tries - 1
+      if (isLast || !isTransientDbError(e)) throw e
+      const base = 80 * Math.pow(2, i)
+      const jitter = Math.floor(Math.random() * 40)
+      await sleep(base + jitter)
+    }
+  }
+  return await fn()
 }
 
 const ScoreKey = {
@@ -278,6 +347,29 @@ function actionToggleHold(state, index) {
   }
 }
 
+function actionToggleHoldBatch(state, indices) {
+  if (state.phase !== Phase.ROLLING) throw err('INVALID_PHASE', '当前阶段不允许保留骰子')
+  if (state.turn.rollCount < 1) throw err('BAD_REQUEST', '必须掷过至少一次才能保留')
+  if (state.turn.rollCount >= MAX_ROLLS_PER_TURN) throw err('BAD_REQUEST', '本回合已结束掷骰')
+  if (!Array.isArray(indices)) throw err('BAD_REQUEST', '缺少indices')
+  const parity = [0, 0, 0, 0, 0]
+  for (const v of indices) {
+    if (typeof v !== 'number' || v < 0 || v > 4) throw err('BAD_REQUEST', '无效骰子索引')
+    parity[v] += 1
+  }
+  let nextHeld = state.turn.held
+  for (let i = 0; i < 5; i += 1) {
+    if (parity[i] % 2 === 1) nextHeld = toggleHold(nextHeld, i)
+  }
+  return {
+    ...state,
+    turn: {
+      ...state.turn,
+      held: nextHeld
+    }
+  }
+}
+
 function actionStopRolling(state) {
   if (state.phase !== Phase.ROLLING) throw err('INVALID_PHASE', '当前阶段不允许停止掷骰')
   if (state.turn.rollCount < 1) throw err('BAD_REQUEST', '至少掷骰一次后才能停止')
@@ -380,7 +472,7 @@ exports.main = async (event) => {
 
     const now = db.serverDate()
 
-    const result = await db.runTransaction(async (txn) => {
+    const result = await runWithRetry(() => db.runTransaction(async (txn) => {
       const ref = txn.collection('rooms').doc(roomId)
       const snap = await ref.get().catch((e) => {
         const msg = (e && (e.message || e.errMsg)) ? (e.message || e.errMsg) : ''
@@ -416,6 +508,9 @@ exports.main = async (event) => {
       } else if (action === 'TOGGLE_HOLD') {
         if (!isMyTurn) throw err('TURN_NOT_YOURS', '未轮到你操作')
         nextState = actionToggleHold(gameState, event && event.index)
+      } else if (action === 'TOGGLE_HOLD_BATCH') {
+        if (!isMyTurn) throw err('TURN_NOT_YOURS', '未轮到你操作')
+        nextState = actionToggleHoldBatch(gameState, event && event.indices)
       } else if (action === 'STOP') {
         if (!isMyTurn) throw err('TURN_NOT_YOURS', '未轮到你操作')
         nextState = actionStopRolling(gameState)
@@ -442,8 +537,10 @@ exports.main = async (event) => {
       await ref.update({ data: update })
       const updated = await ref.get()
       return { room: updated.data, seatIndex }
-    })
+    }), 3)
 
+    const version = result && result.room && typeof result.room.gameVersion === 'number' ? result.room.gameVersion : null
+    await notifyRoomUpdated(roomId, { version: version || null, updatedAt: Date.now() }).catch(() => {})
     return { ok: true, roomId, room: result.room, self: { seatIndex: result.seatIndex } }
   } catch (e) {
     return { ok: false, code: e && e.code ? e.code : 'FUNCTION_ERROR', message: e && e.message ? e.message : '操作失败' }

@@ -5,6 +5,8 @@ try {
   cloud = null
 }
 
+const https = require('https')
+
 let db = null
 if (cloud) {
   cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
@@ -66,6 +68,45 @@ function ensureSeats(input) {
   })
 }
 
+function notifyRoomUpdated(roomId, extra) {
+  const cfg = require('./notifyConfig')
+  const base = process.env.WS_NOTIFY_BASE || process.env.NOTIFY_BASE || (cfg && cfg.notifyBase) || 'https://ws-server-224791-6-1402157537.sh.run.tcloudbase.com'
+  const url = new URL('/notify', base)
+  const token = process.env.WS_NOTIFY_TOKEN || process.env.NOTIFY_TOKEN || (cfg && cfg.notifyToken) || ''
+  const payload = { roomId, ...(extra || {}) }
+  if (token) payload.token = token
+  const body = JSON.stringify(payload)
+  const headers = {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(body)
+  }
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  return new Promise((resolve) => {
+    const req = https.request(
+      {
+        method: 'POST',
+        hostname: url.hostname,
+        path: url.pathname,
+        port: url.port ? Number(url.port) : 443,
+        headers,
+        timeout: 800
+      },
+      (res) => {
+        res.on('data', () => {})
+        res.on('end', () => resolve(true))
+      }
+    )
+    req.on('timeout', () => {
+      req.destroy()
+      resolve(false)
+    })
+    req.on('error', () => resolve(false))
+    req.write(body)
+    req.end()
+  })
+}
+
 exports.main = async (event) => {
   try {
     if (!cloud || !db) throw err('MISSING_DEP', '缺少依赖 wx-server-sdk，请重新部署云函数并安装依赖')
@@ -108,13 +149,17 @@ exports.main = async (event) => {
         if (!s) return s
         if (idx !== seatIndex) return s
         if (!s.uid) return s
-        return { ...s, clientId: null, online: false }
+        if (exit) {
+          return { uid: null, clientId: null, name: seatLabel(idx), online: false, joinedAt: null }
+        }
+        return { ...s, online: false }
       })
       await ref.update({ data: { seats: nextSeats, updatedAt: now } })
       const updated = await ref.get()
       return { action: 'offline', room: updated.data, seatIndex }
     })
 
+    await notifyRoomUpdated(roomId, { updatedAt: Date.now() }).catch(() => {})
     return { ok: true, roomId, ...result }
   } catch (e) {
     return {
