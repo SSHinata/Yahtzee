@@ -1,2 +1,9 @@
 .trae/
-
+ws-server/node_modules/
+ws-server/dist/
+ws-server/.env
+ws-server/config.local.js
+cloudfunctions/**/notifyConfig.js
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
