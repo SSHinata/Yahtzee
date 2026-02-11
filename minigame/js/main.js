@@ -103,9 +103,11 @@ export default class Main {
         expectedVersionMin: 0,
         localActionInFlight: 0,
         actionChain: null,
-        pendingHoldParity: null,
+        pendingHoldState: null,
         holdFlushTimer: null,
         lastHoldTapAt: 0,
+        recentPeerSeqSet: new Set(),
+        recentPeerSeqQueue: [],
         pendingVersion: 0,
         pendingUpdatedAt: 0,
         pullInFlight: false,
@@ -232,8 +234,10 @@ export default class Main {
     rt.expectedVersionMin = 0
     rt.localActionInFlight = 0
     rt.actionChain = null
-    rt.pendingHoldParity = null
+    rt.pendingHoldState = null
     rt.lastHoldTapAt = 0
+    rt.recentPeerSeqSet = new Set()
+    rt.recentPeerSeqQueue = []
     if (rt.holdFlushTimer) {
       clearTimeout(rt.holdFlushTimer)
       rt.holdFlushTimer = null
@@ -299,8 +303,10 @@ export default class Main {
     rt.expectedVersionMin = 0
     rt.localActionInFlight = 0
     rt.actionChain = null
-    rt.pendingHoldParity = null
+    rt.pendingHoldState = null
     rt.lastHoldTapAt = 0
+    rt.recentPeerSeqSet = new Set()
+    rt.recentPeerSeqQueue = []
     if (rt.holdFlushTimer) {
       clearTimeout(rt.holdFlushTimer)
       rt.holdFlushTimer = null
@@ -376,6 +382,14 @@ export default class Main {
           if (!msgRid || msgRid !== rid) return
           const incomingVersion = typeof msg.version === 'number' ? msg.version : 0
           const incomingUpdatedAt = typeof msg.updatedAt === 'number' ? msg.updatedAt : 0
+          const patch = msg && msg.patch && typeof msg.patch === 'object' ? msg.patch : null
+          const state = msg && msg.state && typeof msg.state === 'object' ? msg.state : null
+          const action = msg && typeof msg.action === 'string' ? msg.action : ''
+          const actorSeatIndex = msg && typeof msg.actorSeatIndex === 'number' ? msg.actorSeatIndex : -1
+          if (action === 'removed') {
+            this.handleRoomDismissed()
+            return
+          }
           if (this.realtime) {
             if (incomingVersion > 0) {
               const currentVersion =
@@ -388,7 +402,6 @@ export default class Main {
               }
               if (incomingVersion <= (this.realtime.lastNotifiedVersion || 0)) return
               this.realtime.lastNotifiedVersion = incomingVersion
-              if ((this.realtime.localActionInFlight || 0) > 0) return
             }
             if (incomingUpdatedAt > 0) {
               if (incomingUpdatedAt <= (this.realtime.lastNotifiedUpdatedAt || 0)) return
@@ -397,6 +410,8 @@ export default class Main {
             if (incomingVersion > (this.realtime.pendingVersion || 0)) this.realtime.pendingVersion = incomingVersion
             if (incomingUpdatedAt > (this.realtime.pendingUpdatedAt || 0)) this.realtime.pendingUpdatedAt = incomingUpdatedAt
           }
+          if (this.applyRoomUpdatedState(msgRid, incomingVersion, state)) return
+          if (this.applyRoomUpdatedPatch(msgRid, incomingVersion, patch, action, actorSeatIndex)) return
           this.schedulePullRoomStateFromWs(rid)
         }
 
@@ -482,6 +497,120 @@ export default class Main {
     }
   }
 
+  applyRoomUpdatedPatch(roomId, version, patch, action, actorSeatIndex) {
+    const rid = this.normalizeRoomId(roomId)
+    if (!rid || !patch || typeof patch !== 'object') return false
+    const isHoldAction = action === 'SET_HOLD' || action === 'SET_HOLD_BATCH' || action === 'TOGGLE_HOLD' || action === 'TOGGLE_HOLD_BATCH'
+    if (!isHoldAction) return false
+    if (!this.ui || !this.ui.lobby) return false
+    if (this.normalizeRoomId(this.ui.lobby.roomId) !== rid) return false
+    if (this.screen !== 'game' || this.mode !== 'online2p') return false
+
+    const rt = this.realtime
+    const v = typeof version === 'number' ? version : 0
+    if (rt && v > 0 && v <= (rt.lastAppliedVersion || 0)) return true
+
+    const lobby = this.ui.lobby
+    const seatIndex = this.getOnlineSelfSeatIndex()
+    const isMyAction = seatIndex >= 0 && actorSeatIndex >= 0 && seatIndex === actorSeatIndex
+    const canApplyHeld = !!(patch.turn && Array.isArray(patch.turn.held) && patch.turn.held.length >= 5)
+
+    const nextState = this.state && typeof this.state === 'object' ? { ...this.state } : null
+    if (!nextState || !nextState.turn) return false
+
+    if (typeof patch.phase === 'string') nextState.phase = patch.phase
+    if (typeof patch.currentPlayerIndex === 'number') nextState.currentPlayerIndex = patch.currentPlayerIndex
+
+    const nextTurn = { ...nextState.turn }
+    if (patch.turn && typeof patch.turn.rollCount === 'number') nextTurn.rollCount = patch.turn.rollCount
+    if (patch.turn && typeof patch.turn.lastRollAt === 'number') nextTurn.lastRollAt = patch.turn.lastRollAt
+    if (canApplyHeld && (!action.startsWith('SET_HOLD') || isMyAction || !this.isOnlineMyTurn())) {
+      nextTurn.held = patch.turn.held.slice(0, 5).map((x) => !!x)
+    }
+    nextState.turn = nextTurn
+
+    this.state = this.mergeOnlineGameStateFromServer(nextState)
+    if (lobby.room && lobby.room.gameState) {
+      lobby.room = {
+        ...lobby.room,
+        gameState: this.state,
+        gameVersion: v > 0 ? v : lobby.room.gameVersion
+      }
+    }
+    if (rt && v > 0) {
+      rt.lastAppliedVersion = v
+      if (rt.expectedVersionMin > 0 && v >= rt.expectedVersionMin) rt.expectedVersionMin = 0
+      if (rt.pendingVersion > 0 && v >= rt.pendingVersion) rt.pendingVersion = 0
+    }
+
+    const prevAnimated = typeof lobby.lastAnimatedRollAt === 'number' ? lobby.lastAnimatedRollAt : 0
+    const nextLastRollAt = this.state && this.state.turn && typeof this.state.turn.lastRollAt === 'number' ? this.state.turn.lastRollAt : 0
+    if (nextLastRollAt && nextLastRollAt !== prevAnimated) {
+      lobby.lastAnimatedRollAt = nextLastRollAt
+      if (!this.animState || !this.animState.active) this.startRollAnimation()
+    }
+    return true
+  }
+
+  applyRoomUpdatedState(roomId, version, state) {
+    const rid = this.normalizeRoomId(roomId)
+    if (!rid || !state || typeof state !== 'object') return false
+    if (!this.ui || !this.ui.lobby) return false
+    if (this.normalizeRoomId(this.ui.lobby.roomId) !== rid) return false
+    if (this.screen !== 'game' || this.mode !== 'online2p') return false
+
+    const rt = this.realtime
+    const v = typeof version === 'number' ? version : 0
+    if (rt && v > 0 && v <= (rt.lastAppliedVersion || 0)) return true
+
+    this.state = this.mergeOnlineGameStateFromServer(state)
+    const lobby = this.ui.lobby
+    if (lobby.room) {
+      lobby.room = {
+        ...lobby.room,
+        gameState: this.state,
+        gameVersion: v > 0 ? v : lobby.room.gameVersion
+      }
+    }
+    if (rt && v > 0) {
+      rt.lastAppliedVersion = v
+      if (rt.expectedVersionMin > 0 && v >= rt.expectedVersionMin) rt.expectedVersionMin = 0
+      if (rt.pendingVersion > 0 && v >= rt.pendingVersion) rt.pendingVersion = 0
+    }
+
+    const prevAnimated = typeof lobby.lastAnimatedRollAt === 'number' ? lobby.lastAnimatedRollAt : 0
+    const nextLastRollAt = this.state && this.state.turn && typeof this.state.turn.lastRollAt === 'number' ? this.state.turn.lastRollAt : 0
+    if (nextLastRollAt && nextLastRollAt !== prevAnimated) {
+      lobby.lastAnimatedRollAt = nextLastRollAt
+      if (!this.animState || !this.animState.active) this.startRollAnimation()
+    }
+    return true
+  }
+
+  handleRoomDismissed() {
+    if (!this.ui || !this.ui.lobby) return
+    const lobby = this.ui.lobby
+    lobby.room = null
+    lobby.self = null
+    lobby.error = '房间已解散'
+    lobby.dismissed = true
+    this.stopRoomRealtime()
+    if (wx && typeof wx.showModal === 'function') {
+      wx.showModal({
+        title: '联机对战',
+        content: '房间已解散',
+        confirmText: '返回',
+        showCancel: false,
+        success: (res) => {
+          if (res && res.confirm) this.lobbyExit()
+        }
+      })
+      return
+    }
+    this.showBlockingError('房间已解散')
+    this.lobbyExit()
+  }
+
   applyRoomStateResult(roomId, result) {
     const rid = this.normalizeRoomId(roomId)
     if (!rid) return
@@ -492,25 +621,7 @@ export default class Main {
     if (result && result.ok === false) {
       const code = result.code || ''
       if (code === 'ROOM_NOT_FOUND') {
-        lobby.room = null
-        lobby.self = null
-        lobby.error = '房间已解散'
-        lobby.dismissed = true
-        this.stopRoomRealtime()
-        if (wx && typeof wx.showModal === 'function') {
-          wx.showModal({
-            title: '联机对战',
-            content: '房间已解散',
-            confirmText: '返回',
-            showCancel: false,
-            success: (res) => {
-              if (res && res.confirm) this.lobbyExit()
-            }
-          })
-        } else {
-          this.showBlockingError('房间已解散')
-          this.lobbyExit()
-        }
+        this.handleRoomDismissed()
         return
       }
       if (this.screen === 'lobby') {
@@ -523,6 +634,9 @@ export default class Main {
     let nextRoom = result && result.room ? result.room : null
     const rt0 = this.realtime
     const incomingVersion = nextRoom && typeof nextRoom.gameVersion === 'number' ? nextRoom.gameVersion : 0
+    if (rt0 && rt0.roomId === rid && incomingVersion > 0 && incomingVersion < (rt0.lastAppliedVersion || 0)) {
+      return
+    }
     if (rt0 && rt0.roomId === rid && rt0.expectedVersionMin > 0 && incomingVersion > 0 && incomingVersion < rt0.expectedVersionMin) {
       if (prevRoom && prevRoom.gameState) {
         nextRoom = { ...nextRoom, gameState: prevRoom.gameState, gameVersion: prevRoom.gameVersion }
@@ -589,7 +703,7 @@ export default class Main {
     }
 
     if (lobby.room && lobby.room.gameState) {
-      this.state = lobby.room.gameState
+      this.state = this.mergeOnlineGameStateFromServer(lobby.room.gameState)
       if (this.state && this.state.phase === 'GAME_END') {
         lobby.pollEnabled = false
         this.stopRoomRealtime()
@@ -599,6 +713,47 @@ export default class Main {
       if (nextLastRollAt && nextLastRollAt !== prevAnimated) {
         lobby.lastAnimatedRollAt = nextLastRollAt
         if (!this.animState || !this.animState.active) this.startRollAnimation()
+      }
+    }
+  }
+
+  mergeOnlineGameStateFromServer(serverState) {
+    if (!serverState || typeof serverState !== 'object') return serverState
+    const rt = this.realtime
+    const pending = rt && Array.isArray(rt.pendingHoldState) ? rt.pendingHoldState : null
+    if (!pending || pending.length < 5) return serverState
+
+    if (!serverState.turn || !Array.isArray(serverState.turn.held)) {
+      if (rt) rt.pendingHoldState = null
+      return serverState
+    }
+
+    const currentVersion =
+      this.ui && this.ui.lobby && this.ui.lobby.room && typeof this.ui.lobby.room.gameVersion === 'number'
+        ? this.ui.lobby.room.gameVersion
+        : 0
+    const expectedMin = rt && typeof rt.expectedVersionMin === 'number' ? rt.expectedVersionMin : 0
+    const needsProtect = expectedMin > 0 && currentVersion > 0 && currentVersion < expectedMin
+
+    const pendingNormalized = pending.slice(0, 5).map((v) => !!v)
+    const serverNormalized = serverState.turn.held.slice(0, 5).map((v) => !!v)
+    const aligned = pendingNormalized.every((v, i) => v === serverNormalized[i])
+
+    if (aligned) {
+      if (rt) rt.pendingHoldState = null
+      return serverState
+    }
+
+    if (!needsProtect) {
+      if (rt) rt.pendingHoldState = null
+      return serverState
+    }
+
+    return {
+      ...serverState,
+      turn: {
+        ...serverState.turn,
+        held: pendingNormalized
       }
     }
   }
@@ -692,7 +847,7 @@ export default class Main {
       }
       if (result && result.room) {
         this.ui.lobby.room = result.room
-        if (result.room.gameState) this.state = result.room.gameState
+        if (result.room.gameState) this.state = this.mergeOnlineGameStateFromServer(result.room.gameState)
         const v = result.room && typeof result.room.gameVersion === 'number' ? result.room.gameVersion : 0
         if (rt && v > 0) {
           rt.lastAppliedVersion = v
@@ -772,9 +927,26 @@ export default class Main {
     const lobby = this.ui && this.ui.lobby ? this.ui.lobby : null
     const room = lobby && lobby.room ? lobby.room : null
     const currentVersion = room && typeof room.gameVersion === 'number' ? room.gameVersion : 0
-    if (currentVersion <= 0) return
-    const next = currentVersion + 1
+    const base = Math.max(currentVersion, rt.expectedVersionMin || 0)
+    if (base <= 0) return
+    const next = base + 1
     if (next > (rt.expectedVersionMin || 0)) rt.expectedVersionMin = next
+  }
+
+  rememberPeerSeq(seq) {
+    const rt = this.realtime
+    if (!rt || typeof seq !== 'string' || !seq) return false
+    if (!(rt.recentPeerSeqSet instanceof Set)) rt.recentPeerSeqSet = new Set()
+    if (!Array.isArray(rt.recentPeerSeqQueue)) rt.recentPeerSeqQueue = []
+    if (rt.recentPeerSeqSet.has(seq)) return true
+    rt.recentPeerSeqSet.add(seq)
+    rt.recentPeerSeqQueue.push(seq)
+    const max = 200
+    while (rt.recentPeerSeqQueue.length > max) {
+      const old = rt.recentPeerSeqQueue.shift()
+      if (old) rt.recentPeerSeqSet.delete(old)
+    }
+    return false
   }
 
   scheduleFlushHoldToggles(roomId) {
@@ -787,16 +959,11 @@ export default class Main {
       if (!this.realtime) return
       const rt2 = this.realtime
       rt2.holdFlushTimer = null
-      const parity = Array.isArray(rt2.pendingHoldParity) ? rt2.pendingHoldParity : null
-      if (!parity || parity.length < 5) return
-      const indices = []
-      for (let i = 0; i < 5; i++) {
-        if (parity[i] % 2 === 1) indices.push(i)
-        parity[i] = 0
-      }
-      if (indices.length === 0) return
-      this.sendPeerAction('TOGGLE_HOLD_BATCH', { indices })
-      this.onlineAction('TOGGLE_HOLD_BATCH', { indices }, { bypassQueue: true }).catch(() => {
+      const held = Array.isArray(rt2.pendingHoldState) ? rt2.pendingHoldState.slice(0, 5) : null
+      rt2.pendingHoldState = null
+      if (!held || held.length < 5) return
+      const normalized = held.map((v) => !!v)
+      this.onlineAction('SET_HOLD_BATCH', { held: normalized }, { bypassQueue: true }).catch(() => {
         if (this.realtime) this.realtime.expectedVersionMin = 0
         this.schedulePullRoomStateFromWs(rid)
       })
@@ -806,6 +973,7 @@ export default class Main {
   applyPeerAction(msg) {
     if (!msg || typeof msg.action !== 'string') return
     if (msg.fromClientId && msg.fromClientId === this.clientId) return
+    if (this.rememberPeerSeq(msg.seq)) return
     const action = msg.action
     const payload = msg && typeof msg.payload === 'object' ? msg.payload : null
 
@@ -818,28 +986,12 @@ export default class Main {
       this.startRollAnimationAwaiting(nextRollCount)
       return
     }
-    if (action === 'TOGGLE_HOLD_BATCH') {
-      const indices = payload && Array.isArray(payload.indices) ? payload.indices : null
-      if (!indices) return
-      const parity = [0, 0, 0, 0, 0]
-      for (const v of indices) {
-        if (typeof v !== 'number' || v < 0 || v > 4) return
-        parity[v] += 1
-      }
+    if (action === 'SET_HOLD_BATCH' || action === 'SET_HOLD' || action === 'TOGGLE_HOLD_BATCH' || action === 'TOGGLE_HOLD') {
+      // 对手锁定状态只以服务端版本状态为准，避免 peerAction 与快照竞争导致闪烁
       this.bumpExpectedVersionMin()
-      for (let i = 0; i < 5; i++) {
-        if (parity[i] % 2 !== 1) continue
-        this.applyOptimisticOnlineState((s) => actionToggleHold(s, i))
-      }
       return
     }
-    if (action === 'TOGGLE_HOLD') {
-      const index = payload && typeof payload.index === 'number' ? payload.index : -1
-      if (index < 0 || index > 4) return
-      this.bumpExpectedVersionMin()
-      this.applyOptimisticOnlineState((s) => actionToggleHold(s, index))
-      return
-    }
+
     if (action === 'STOP') {
       this.bumpExpectedVersionMin()
       this.applyOptimisticOnlineState((s) => actionStopRolling(s))
@@ -1806,13 +1958,12 @@ export default class Main {
         const last = typeof rt.lastHoldTapAt === 'number' ? rt.lastHoldTapAt : 0
         if (now - last < 30) return
         rt.lastHoldTapAt = now
-        if (!Array.isArray(rt.pendingHoldParity) || rt.pendingHoldParity.length < 5) {
-          rt.pendingHoldParity = [0, 0, 0, 0, 0]
-        }
-        rt.pendingHoldParity[diceIndex] = (rt.pendingHoldParity[diceIndex] || 0) + 1
       }
       this.bumpExpectedVersionMin()
       this.applyOptimisticOnlineState((s) => actionToggleHold(s, diceIndex))
+      if (rt && this.state && this.state.turn && Array.isArray(this.state.turn.held)) {
+        rt.pendingHoldState = this.state.turn.held.slice(0, 5).map((v) => !!v)
+      }
       this.scheduleFlushHoldToggles(rid)
       return
     }

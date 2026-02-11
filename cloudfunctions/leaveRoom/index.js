@@ -159,7 +159,7 @@ exports.main = async (event) => {
       return { action: 'offline', room: updated.data, seatIndex }
     })
 
-    await notifyRoomUpdated(roomId, { updatedAt: Date.now() }).catch(() => {})
+    await notifyRoomUpdated(roomId, { updatedAt: Date.now(), action: result && result.action ? result.action : null }).catch(() => {})
     return { ok: true, roomId, ...result }
   } catch (e) {
     return {

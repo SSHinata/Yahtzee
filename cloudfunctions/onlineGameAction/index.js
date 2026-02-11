@@ -370,6 +370,38 @@ function actionToggleHoldBatch(state, indices) {
   }
 }
 
+function actionSetHold(state, index, held) {
+  if (state.phase !== Phase.ROLLING) throw err('INVALID_PHASE', '当前阶段不允许保留骰子')
+  if (state.turn.rollCount < 1) throw err('BAD_REQUEST', '必须掷过至少一次才能保留')
+  if (state.turn.rollCount >= MAX_ROLLS_PER_TURN) throw err('BAD_REQUEST', '本回合已结束掷骰')
+  if (typeof index !== 'number' || index < 0 || index > 4) throw err('BAD_REQUEST', '无效骰子索引')
+  const targetHeld = !!held
+  const nextHeld = state.turn.held.slice()
+  nextHeld[index] = targetHeld
+  return {
+    ...state,
+    turn: {
+      ...state.turn,
+      held: nextHeld
+    }
+  }
+}
+
+function actionSetHoldBatch(state, held) {
+  if (state.phase !== Phase.ROLLING) throw err('INVALID_PHASE', '当前阶段不允许保留骰子')
+  if (state.turn.rollCount < 1) throw err('BAD_REQUEST', '必须掷过至少一次才能保留')
+  if (state.turn.rollCount >= MAX_ROLLS_PER_TURN) throw err('BAD_REQUEST', '本回合已结束掷骰')
+  if (!Array.isArray(held) || held.length < 5) throw err('BAD_REQUEST', '缺少held数组')
+  const nextHeld = held.slice(0, 5).map((v) => !!v)
+  return {
+    ...state,
+    turn: {
+      ...state.turn,
+      held: nextHeld
+    }
+  }
+}
+
 function actionStopRolling(state) {
   if (state.phase !== Phase.ROLLING) throw err('INVALID_PHASE', '当前阶段不允许停止掷骰')
   if (state.turn.rollCount < 1) throw err('BAD_REQUEST', '至少掷骰一次后才能停止')
@@ -511,6 +543,12 @@ exports.main = async (event) => {
       } else if (action === 'TOGGLE_HOLD_BATCH') {
         if (!isMyTurn) throw err('TURN_NOT_YOURS', '未轮到你操作')
         nextState = actionToggleHoldBatch(gameState, event && event.indices)
+      } else if (action === 'SET_HOLD') {
+        if (!isMyTurn) throw err('TURN_NOT_YOURS', '未轮到你操作')
+        nextState = actionSetHold(gameState, event && event.index, event && event.held)
+      } else if (action === 'SET_HOLD_BATCH') {
+        if (!isMyTurn) throw err('TURN_NOT_YOURS', '未轮到你操作')
+        nextState = actionSetHoldBatch(gameState, event && event.held)
       } else if (action === 'STOP') {
         if (!isMyTurn) throw err('TURN_NOT_YOURS', '未轮到你操作')
         nextState = actionStopRolling(gameState)
@@ -536,11 +574,32 @@ exports.main = async (event) => {
 
       await ref.update({ data: update })
       const updated = await ref.get()
-      return { room: updated.data, seatIndex }
+      return { room: updated.data, seatIndex, action, actorSeatIndex: seatIndex, nextState }
     }), 3)
 
     const version = result && result.room && typeof result.room.gameVersion === 'number' ? result.room.gameVersion : null
-    await notifyRoomUpdated(roomId, { version: version || null, updatedAt: Date.now() }).catch(() => {})
+    const stateForPatch = result && result.nextState ? result.nextState : (result && result.room ? result.room.gameState : null)
+    const patch = stateForPatch
+      ? {
+          phase: stateForPatch.phase,
+          currentPlayerIndex: stateForPatch.currentPlayerIndex,
+          turn: stateForPatch.turn
+            ? {
+                held: Array.isArray(stateForPatch.turn.held) ? stateForPatch.turn.held.slice(0, 5).map((v) => !!v) : null,
+                rollCount: typeof stateForPatch.turn.rollCount === 'number' ? stateForPatch.turn.rollCount : null,
+                lastRollAt: typeof stateForPatch.turn.lastRollAt === 'number' ? stateForPatch.turn.lastRollAt : null
+              }
+            : null
+        }
+      : null
+    await notifyRoomUpdated(roomId, {
+      version: version || null,
+      updatedAt: Date.now(),
+      action: result && result.action ? result.action : action,
+      actorSeatIndex: result && typeof result.actorSeatIndex === 'number' ? result.actorSeatIndex : null,
+      patch,
+      state: stateForPatch || null
+    }).catch(() => {})
     return { ok: true, roomId, room: result.room, self: { seatIndex: result.seatIndex } }
   } catch (e) {
     return { ok: false, code: e && e.code ? e.code : 'FUNCTION_ERROR', message: e && e.message ? e.message : '操作失败' }
