@@ -574,11 +574,31 @@ exports.main = async (event) => {
 
       await ref.update({ data: update })
       const updated = await ref.get()
-      return { room: updated.data, seatIndex }
+      return { room: updated.data, seatIndex, action, actorSeatIndex: seatIndex, nextState }
     }), 3)
 
     const version = result && result.room && typeof result.room.gameVersion === 'number' ? result.room.gameVersion : null
-    await notifyRoomUpdated(roomId, { version: version || null, updatedAt: Date.now() }).catch(() => {})
+    const stateForPatch = result && result.nextState ? result.nextState : (result && result.room ? result.room.gameState : null)
+    const patch = stateForPatch
+      ? {
+          phase: stateForPatch.phase,
+          currentPlayerIndex: stateForPatch.currentPlayerIndex,
+          turn: stateForPatch.turn
+            ? {
+                held: Array.isArray(stateForPatch.turn.held) ? stateForPatch.turn.held.slice(0, 5).map((v) => !!v) : null,
+                rollCount: typeof stateForPatch.turn.rollCount === 'number' ? stateForPatch.turn.rollCount : null,
+                lastRollAt: typeof stateForPatch.turn.lastRollAt === 'number' ? stateForPatch.turn.lastRollAt : null
+              }
+            : null
+        }
+      : null
+    await notifyRoomUpdated(roomId, {
+      version: version || null,
+      updatedAt: Date.now(),
+      action: result && result.action ? result.action : action,
+      actorSeatIndex: result && typeof result.actorSeatIndex === 'number' ? result.actorSeatIndex : null,
+      patch
+    }).catch(() => {})
     return { ok: true, roomId, room: result.room, self: { seatIndex: result.seatIndex } }
   } catch (e) {
     return { ok: false, code: e && e.code ? e.code : 'FUNCTION_ERROR', message: e && e.message ? e.message : '操作失败' }

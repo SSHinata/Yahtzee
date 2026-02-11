@@ -382,6 +382,9 @@ export default class Main {
           if (!msgRid || msgRid !== rid) return
           const incomingVersion = typeof msg.version === 'number' ? msg.version : 0
           const incomingUpdatedAt = typeof msg.updatedAt === 'number' ? msg.updatedAt : 0
+          const patch = msg && msg.patch && typeof msg.patch === 'object' ? msg.patch : null
+          const action = msg && typeof msg.action === 'string' ? msg.action : ''
+          const actorSeatIndex = msg && typeof msg.actorSeatIndex === 'number' ? msg.actorSeatIndex : -1
           if (this.realtime) {
             if (incomingVersion > 0) {
               const currentVersion =
@@ -394,7 +397,6 @@ export default class Main {
               }
               if (incomingVersion <= (this.realtime.lastNotifiedVersion || 0)) return
               this.realtime.lastNotifiedVersion = incomingVersion
-              if ((this.realtime.localActionInFlight || 0) > 0) return
             }
             if (incomingUpdatedAt > 0) {
               if (incomingUpdatedAt <= (this.realtime.lastNotifiedUpdatedAt || 0)) return
@@ -403,6 +405,7 @@ export default class Main {
             if (incomingVersion > (this.realtime.pendingVersion || 0)) this.realtime.pendingVersion = incomingVersion
             if (incomingUpdatedAt > (this.realtime.pendingUpdatedAt || 0)) this.realtime.pendingUpdatedAt = incomingUpdatedAt
           }
+          if (this.applyRoomUpdatedPatch(msgRid, incomingVersion, patch, action, actorSeatIndex)) return
           this.schedulePullRoomStateFromWs(rid)
         }
 
@@ -488,6 +491,59 @@ export default class Main {
     }
   }
 
+  applyRoomUpdatedPatch(roomId, version, patch, action, actorSeatIndex) {
+    const rid = this.normalizeRoomId(roomId)
+    if (!rid || !patch || typeof patch !== 'object') return false
+    if (!this.ui || !this.ui.lobby) return false
+    if (this.normalizeRoomId(this.ui.lobby.roomId) !== rid) return false
+    if (this.screen !== 'game' || this.mode !== 'online2p') return false
+
+    const rt = this.realtime
+    const v = typeof version === 'number' ? version : 0
+    if (rt && v > 0 && v <= (rt.lastAppliedVersion || 0)) return true
+
+    const lobby = this.ui.lobby
+    const seatIndex = this.getOnlineSelfSeatIndex()
+    const isMyAction = seatIndex >= 0 && actorSeatIndex >= 0 && seatIndex === actorSeatIndex
+    const canApplyHeld = !!(patch.turn && Array.isArray(patch.turn.held) && patch.turn.held.length >= 5)
+
+    const nextState = this.state && typeof this.state === 'object' ? { ...this.state } : null
+    if (!nextState || !nextState.turn) return false
+
+    if (typeof patch.phase === 'string') nextState.phase = patch.phase
+    if (typeof patch.currentPlayerIndex === 'number') nextState.currentPlayerIndex = patch.currentPlayerIndex
+
+    const nextTurn = { ...nextState.turn }
+    if (patch.turn && typeof patch.turn.rollCount === 'number') nextTurn.rollCount = patch.turn.rollCount
+    if (patch.turn && typeof patch.turn.lastRollAt === 'number') nextTurn.lastRollAt = patch.turn.lastRollAt
+    if (canApplyHeld && (!action.startsWith('SET_HOLD') || isMyAction || !this.isOnlineMyTurn())) {
+      nextTurn.held = patch.turn.held.slice(0, 5).map((x) => !!x)
+    }
+    nextState.turn = nextTurn
+
+    this.state = this.mergeOnlineGameStateFromServer(nextState)
+    if (lobby.room && lobby.room.gameState) {
+      lobby.room = {
+        ...lobby.room,
+        gameState: this.state,
+        gameVersion: v > 0 ? v : lobby.room.gameVersion
+      }
+    }
+    if (rt && v > 0) {
+      rt.lastAppliedVersion = v
+      if (rt.expectedVersionMin > 0 && v >= rt.expectedVersionMin) rt.expectedVersionMin = 0
+      if (rt.pendingVersion > 0 && v >= rt.pendingVersion) rt.pendingVersion = 0
+    }
+
+    const prevAnimated = typeof lobby.lastAnimatedRollAt === 'number' ? lobby.lastAnimatedRollAt : 0
+    const nextLastRollAt = this.state && this.state.turn && typeof this.state.turn.lastRollAt === 'number' ? this.state.turn.lastRollAt : 0
+    if (nextLastRollAt && nextLastRollAt !== prevAnimated) {
+      lobby.lastAnimatedRollAt = nextLastRollAt
+      if (!this.animState || !this.animState.active) this.startRollAnimation()
+    }
+    return true
+  }
+
   applyRoomStateResult(roomId, result) {
     const rid = this.normalizeRoomId(roomId)
     if (!rid) return
@@ -529,6 +585,9 @@ export default class Main {
     let nextRoom = result && result.room ? result.room : null
     const rt0 = this.realtime
     const incomingVersion = nextRoom && typeof nextRoom.gameVersion === 'number' ? nextRoom.gameVersion : 0
+    if (rt0 && rt0.roomId === rid && incomingVersion > 0 && incomingVersion < (rt0.lastAppliedVersion || 0)) {
+      return
+    }
     if (rt0 && rt0.roomId === rid && rt0.expectedVersionMin > 0 && incomingVersion > 0 && incomingVersion < rt0.expectedVersionMin) {
       if (prevRoom && prevRoom.gameState) {
         nextRoom = { ...nextRoom, gameState: prevRoom.gameState, gameVersion: prevRoom.gameVersion }
@@ -819,8 +878,9 @@ export default class Main {
     const lobby = this.ui && this.ui.lobby ? this.ui.lobby : null
     const room = lobby && lobby.room ? lobby.room : null
     const currentVersion = room && typeof room.gameVersion === 'number' ? room.gameVersion : 0
-    if (currentVersion <= 0) return
-    const next = currentVersion + 1
+    const base = Math.max(currentVersion, rt.expectedVersionMin || 0)
+    if (base <= 0) return
+    const next = base + 1
     if (next > (rt.expectedVersionMin || 0)) rt.expectedVersionMin = next
   }
 
@@ -878,64 +938,12 @@ export default class Main {
       this.startRollAnimationAwaiting(nextRollCount)
       return
     }
-    if (action === 'SET_HOLD_BATCH') {
-      const held = payload && Array.isArray(payload.held) ? payload.held : null
-      if (!held || held.length < 5) return
+    if (action === 'SET_HOLD_BATCH' || action === 'SET_HOLD' || action === 'TOGGLE_HOLD_BATCH' || action === 'TOGGLE_HOLD') {
+      // 对手锁定状态只以服务端版本状态为准，避免 peerAction 与快照竞争导致闪烁
       this.bumpExpectedVersionMin()
-      this.applyOptimisticOnlineState((s) => {
-        if (!s || !s.turn || !Array.isArray(s.turn.held)) return s
-        return {
-          ...s,
-          turn: {
-            ...s.turn,
-            held: held.slice(0, 5).map((v) => !!v)
-          }
-        }
-      })
-      return
-    }
-    if (action === 'SET_HOLD') {
-      const index = payload && typeof payload.index === 'number' ? payload.index : -1
-      if (index < 0 || index > 4) return
-      const targetHeld = !!(payload && payload.held)
-      this.bumpExpectedVersionMin()
-      this.applyOptimisticOnlineState((s) => {
-        if (!s || !s.turn || !Array.isArray(s.turn.held)) return s
-        const nextHeld = s.turn.held.slice()
-        nextHeld[index] = targetHeld
-        return {
-          ...s,
-          turn: {
-            ...s.turn,
-            held: nextHeld
-          }
-        }
-      })
       return
     }
 
-    if (action === 'TOGGLE_HOLD_BATCH') {
-      const indices = payload && Array.isArray(payload.indices) ? payload.indices : null
-      if (!indices) return
-      const parity = [0, 0, 0, 0, 0]
-      for (const v of indices) {
-        if (typeof v !== 'number' || v < 0 || v > 4) return
-        parity[v] += 1
-      }
-      this.bumpExpectedVersionMin()
-      for (let i = 0; i < 5; i++) {
-        if (parity[i] % 2 !== 1) continue
-        this.applyOptimisticOnlineState((s) => actionToggleHold(s, i))
-      }
-      return
-    }
-    if (action === 'TOGGLE_HOLD') {
-      const index = payload && typeof payload.index === 'number' ? payload.index : -1
-      if (index < 0 || index > 4) return
-      this.bumpExpectedVersionMin()
-      this.applyOptimisticOnlineState((s) => actionToggleHold(s, index))
-      return
-    }
     if (action === 'STOP') {
       this.bumpExpectedVersionMin()
       this.applyOptimisticOnlineState((s) => actionStopRolling(s))
@@ -1212,12 +1220,15 @@ export default class Main {
     if (lobby.pollInFlight) return
     const rt = this.realtime
     const wsConnected = !!(rt && rt.connected && this.normalizeRoomId(rt.roomId) === roomId)
+    const pendingVersion = rt && typeof rt.pendingVersion === 'number' ? rt.pendingVersion : 0
+    const appliedVersion = rt && typeof rt.lastAppliedVersion === 'number' ? rt.lastAppliedVersion : 0
     const myTurn = this.isOnlineMyTurn()
     const base = lobby.pollEnabled ? (myTurn ? 1200 : 900) : (wsConnected ? (myTurn ? 6000 : 5000) : 900)
     const backoff = typeof lobby.pollBackoffMs === 'number' ? lobby.pollBackoffMs : 0
     const interval = Math.max(base, backoff)
     const wsConnecting = !!(rt && rt.connecting && this.normalizeRoomId(rt.roomId) === roomId)
     if (!lobby.pollEnabled && wsConnected === false && !wsConnecting) lobby.pollEnabled = true
+    if (!lobby.pollEnabled && wsConnected && pendingVersion <= appliedVersion) return
     if (now - (lobby.lastPollAt || 0) < interval) return
 
     lobby.lastPollAt = now
