@@ -383,6 +383,7 @@ export default class Main {
           const incomingVersion = typeof msg.version === 'number' ? msg.version : 0
           const incomingUpdatedAt = typeof msg.updatedAt === 'number' ? msg.updatedAt : 0
           const patch = msg && msg.patch && typeof msg.patch === 'object' ? msg.patch : null
+          const state = msg && msg.state && typeof msg.state === 'object' ? msg.state : null
           const action = msg && typeof msg.action === 'string' ? msg.action : ''
           const actorSeatIndex = msg && typeof msg.actorSeatIndex === 'number' ? msg.actorSeatIndex : -1
           if (action === 'removed') {
@@ -409,6 +410,7 @@ export default class Main {
             if (incomingVersion > (this.realtime.pendingVersion || 0)) this.realtime.pendingVersion = incomingVersion
             if (incomingUpdatedAt > (this.realtime.pendingUpdatedAt || 0)) this.realtime.pendingUpdatedAt = incomingUpdatedAt
           }
+          if (this.applyRoomUpdatedState(msgRid, incomingVersion, state)) return
           if (this.applyRoomUpdatedPatch(msgRid, incomingVersion, patch, action, actorSeatIndex)) return
           this.schedulePullRoomStateFromWs(rid)
         }
@@ -529,6 +531,41 @@ export default class Main {
 
     this.state = this.mergeOnlineGameStateFromServer(nextState)
     if (lobby.room && lobby.room.gameState) {
+      lobby.room = {
+        ...lobby.room,
+        gameState: this.state,
+        gameVersion: v > 0 ? v : lobby.room.gameVersion
+      }
+    }
+    if (rt && v > 0) {
+      rt.lastAppliedVersion = v
+      if (rt.expectedVersionMin > 0 && v >= rt.expectedVersionMin) rt.expectedVersionMin = 0
+      if (rt.pendingVersion > 0 && v >= rt.pendingVersion) rt.pendingVersion = 0
+    }
+
+    const prevAnimated = typeof lobby.lastAnimatedRollAt === 'number' ? lobby.lastAnimatedRollAt : 0
+    const nextLastRollAt = this.state && this.state.turn && typeof this.state.turn.lastRollAt === 'number' ? this.state.turn.lastRollAt : 0
+    if (nextLastRollAt && nextLastRollAt !== prevAnimated) {
+      lobby.lastAnimatedRollAt = nextLastRollAt
+      if (!this.animState || !this.animState.active) this.startRollAnimation()
+    }
+    return true
+  }
+
+  applyRoomUpdatedState(roomId, version, state) {
+    const rid = this.normalizeRoomId(roomId)
+    if (!rid || !state || typeof state !== 'object') return false
+    if (!this.ui || !this.ui.lobby) return false
+    if (this.normalizeRoomId(this.ui.lobby.roomId) !== rid) return false
+    if (this.screen !== 'game' || this.mode !== 'online2p') return false
+
+    const rt = this.realtime
+    const v = typeof version === 'number' ? version : 0
+    if (rt && v > 0 && v <= (rt.lastAppliedVersion || 0)) return true
+
+    this.state = this.mergeOnlineGameStateFromServer(state)
+    const lobby = this.ui.lobby
+    if (lobby.room) {
       lobby.room = {
         ...lobby.room,
         gameState: this.state,

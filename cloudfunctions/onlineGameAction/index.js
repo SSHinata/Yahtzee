@@ -597,7 +597,8 @@ exports.main = async (event) => {
       updatedAt: Date.now(),
       action: result && result.action ? result.action : action,
       actorSeatIndex: result && typeof result.actorSeatIndex === 'number' ? result.actorSeatIndex : null,
-      patch
+      patch,
+      state: stateForPatch || null
     }).catch(() => {})
     return { ok: true, roomId, room: result.room, self: { seatIndex: result.seatIndex } }
   } catch (e) {

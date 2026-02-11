@@ -180,9 +180,10 @@ app.post('/notify', (req, res) => {
   const version = req.body && (typeof req.body.version === 'number' ? req.body.version : null)
   const updatedAt = req.body && (typeof req.body.updatedAt === 'number' ? req.body.updatedAt : null)
   const patch = req.body && req.body.patch && typeof req.body.patch === 'object' ? req.body.patch : null
+  const state = req.body && req.body.state && typeof req.body.state === 'object' ? req.body.state : null
   const action = req.body && typeof req.body.action === 'string' ? req.body.action : null
   const actorSeatIndex = req.body && typeof req.body.actorSeatIndex === 'number' ? req.body.actorSeatIndex : null
-  const message = { type: 'roomUpdated', roomId, ts, version, updatedAt, patch, action, actorSeatIndex }
+  const message = { type: 'roomUpdated', roomId, ts, version, updatedAt, patch, state, action, actorSeatIndex }
 
   const delivered = broadcastRoom(roomId, message)
   res.json({ ok: true, roomId, delivered, ts })
