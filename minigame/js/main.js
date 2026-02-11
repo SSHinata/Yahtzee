@@ -494,6 +494,8 @@ export default class Main {
   applyRoomUpdatedPatch(roomId, version, patch, action, actorSeatIndex) {
     const rid = this.normalizeRoomId(roomId)
     if (!rid || !patch || typeof patch !== 'object') return false
+    const isHoldAction = action === 'SET_HOLD' || action === 'SET_HOLD_BATCH' || action === 'TOGGLE_HOLD' || action === 'TOGGLE_HOLD_BATCH'
+    if (!isHoldAction) return false
     if (!this.ui || !this.ui.lobby) return false
     if (this.normalizeRoomId(this.ui.lobby.roomId) !== rid) return false
     if (this.screen !== 'game' || this.mode !== 'online2p') return false
@@ -914,7 +916,6 @@ export default class Main {
       rt2.pendingHoldState = null
       if (!held || held.length < 5) return
       const normalized = held.map((v) => !!v)
-      this.sendPeerAction('SET_HOLD_BATCH', { held: normalized })
       this.onlineAction('SET_HOLD_BATCH', { held: normalized }, { bypassQueue: true }).catch(() => {
         if (this.realtime) this.realtime.expectedVersionMin = 0
         this.schedulePullRoomStateFromWs(rid)
