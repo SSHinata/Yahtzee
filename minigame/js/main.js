@@ -103,9 +103,11 @@ export default class Main {
         expectedVersionMin: 0,
         localActionInFlight: 0,
         actionChain: null,
-        pendingHoldParity: null,
+        pendingHoldState: null,
         holdFlushTimer: null,
         lastHoldTapAt: 0,
+        recentPeerSeqSet: new Set(),
+        recentPeerSeqQueue: [],
         pendingVersion: 0,
         pendingUpdatedAt: 0,
         pullInFlight: false,
@@ -232,8 +234,10 @@ export default class Main {
     rt.expectedVersionMin = 0
     rt.localActionInFlight = 0
     rt.actionChain = null
-    rt.pendingHoldParity = null
+    rt.pendingHoldState = null
     rt.lastHoldTapAt = 0
+    rt.recentPeerSeqSet = new Set()
+    rt.recentPeerSeqQueue = []
     if (rt.holdFlushTimer) {
       clearTimeout(rt.holdFlushTimer)
       rt.holdFlushTimer = null
@@ -299,8 +303,10 @@ export default class Main {
     rt.expectedVersionMin = 0
     rt.localActionInFlight = 0
     rt.actionChain = null
-    rt.pendingHoldParity = null
+    rt.pendingHoldState = null
     rt.lastHoldTapAt = 0
+    rt.recentPeerSeqSet = new Set()
+    rt.recentPeerSeqQueue = []
     if (rt.holdFlushTimer) {
       clearTimeout(rt.holdFlushTimer)
       rt.holdFlushTimer = null
@@ -589,7 +595,7 @@ export default class Main {
     }
 
     if (lobby.room && lobby.room.gameState) {
-      this.state = lobby.room.gameState
+      this.state = this.mergeOnlineGameStateFromServer(lobby.room.gameState)
       if (this.state && this.state.phase === 'GAME_END') {
         lobby.pollEnabled = false
         this.stopRoomRealtime()
@@ -599,6 +605,47 @@ export default class Main {
       if (nextLastRollAt && nextLastRollAt !== prevAnimated) {
         lobby.lastAnimatedRollAt = nextLastRollAt
         if (!this.animState || !this.animState.active) this.startRollAnimation()
+      }
+    }
+  }
+
+  mergeOnlineGameStateFromServer(serverState) {
+    if (!serverState || typeof serverState !== 'object') return serverState
+    const rt = this.realtime
+    const pending = rt && Array.isArray(rt.pendingHoldState) ? rt.pendingHoldState : null
+    if (!pending || pending.length < 5) return serverState
+
+    if (!serverState.turn || !Array.isArray(serverState.turn.held)) {
+      if (rt) rt.pendingHoldState = null
+      return serverState
+    }
+
+    const currentVersion =
+      this.ui && this.ui.lobby && this.ui.lobby.room && typeof this.ui.lobby.room.gameVersion === 'number'
+        ? this.ui.lobby.room.gameVersion
+        : 0
+    const expectedMin = rt && typeof rt.expectedVersionMin === 'number' ? rt.expectedVersionMin : 0
+    const needsProtect = expectedMin > 0 && currentVersion > 0 && currentVersion < expectedMin
+
+    const pendingNormalized = pending.slice(0, 5).map((v) => !!v)
+    const serverNormalized = serverState.turn.held.slice(0, 5).map((v) => !!v)
+    const aligned = pendingNormalized.every((v, i) => v === serverNormalized[i])
+
+    if (aligned) {
+      if (rt) rt.pendingHoldState = null
+      return serverState
+    }
+
+    if (!needsProtect) {
+      if (rt) rt.pendingHoldState = null
+      return serverState
+    }
+
+    return {
+      ...serverState,
+      turn: {
+        ...serverState.turn,
+        held: pendingNormalized
       }
     }
   }
@@ -692,7 +739,7 @@ export default class Main {
       }
       if (result && result.room) {
         this.ui.lobby.room = result.room
-        if (result.room.gameState) this.state = result.room.gameState
+        if (result.room.gameState) this.state = this.mergeOnlineGameStateFromServer(result.room.gameState)
         const v = result.room && typeof result.room.gameVersion === 'number' ? result.room.gameVersion : 0
         if (rt && v > 0) {
           rt.lastAppliedVersion = v
@@ -777,6 +824,22 @@ export default class Main {
     if (next > (rt.expectedVersionMin || 0)) rt.expectedVersionMin = next
   }
 
+  rememberPeerSeq(seq) {
+    const rt = this.realtime
+    if (!rt || typeof seq !== 'string' || !seq) return false
+    if (!(rt.recentPeerSeqSet instanceof Set)) rt.recentPeerSeqSet = new Set()
+    if (!Array.isArray(rt.recentPeerSeqQueue)) rt.recentPeerSeqQueue = []
+    if (rt.recentPeerSeqSet.has(seq)) return true
+    rt.recentPeerSeqSet.add(seq)
+    rt.recentPeerSeqQueue.push(seq)
+    const max = 200
+    while (rt.recentPeerSeqQueue.length > max) {
+      const old = rt.recentPeerSeqQueue.shift()
+      if (old) rt.recentPeerSeqSet.delete(old)
+    }
+    return false
+  }
+
   scheduleFlushHoldToggles(roomId) {
     const rt = this.realtime
     if (!rt) return
@@ -787,16 +850,12 @@ export default class Main {
       if (!this.realtime) return
       const rt2 = this.realtime
       rt2.holdFlushTimer = null
-      const parity = Array.isArray(rt2.pendingHoldParity) ? rt2.pendingHoldParity : null
-      if (!parity || parity.length < 5) return
-      const indices = []
-      for (let i = 0; i < 5; i++) {
-        if (parity[i] % 2 === 1) indices.push(i)
-        parity[i] = 0
-      }
-      if (indices.length === 0) return
-      this.sendPeerAction('TOGGLE_HOLD_BATCH', { indices })
-      this.onlineAction('TOGGLE_HOLD_BATCH', { indices }, { bypassQueue: true }).catch(() => {
+      const held = Array.isArray(rt2.pendingHoldState) ? rt2.pendingHoldState.slice(0, 5) : null
+      rt2.pendingHoldState = null
+      if (!held || held.length < 5) return
+      const normalized = held.map((v) => !!v)
+      this.sendPeerAction('SET_HOLD_BATCH', { held: normalized })
+      this.onlineAction('SET_HOLD_BATCH', { held: normalized }, { bypassQueue: true }).catch(() => {
         if (this.realtime) this.realtime.expectedVersionMin = 0
         this.schedulePullRoomStateFromWs(rid)
       })
@@ -806,6 +865,7 @@ export default class Main {
   applyPeerAction(msg) {
     if (!msg || typeof msg.action !== 'string') return
     if (msg.fromClientId && msg.fromClientId === this.clientId) return
+    if (this.rememberPeerSeq(msg.seq)) return
     const action = msg.action
     const payload = msg && typeof msg.payload === 'object' ? msg.payload : null
 
@@ -818,6 +878,42 @@ export default class Main {
       this.startRollAnimationAwaiting(nextRollCount)
       return
     }
+    if (action === 'SET_HOLD_BATCH') {
+      const held = payload && Array.isArray(payload.held) ? payload.held : null
+      if (!held || held.length < 5) return
+      this.bumpExpectedVersionMin()
+      this.applyOptimisticOnlineState((s) => {
+        if (!s || !s.turn || !Array.isArray(s.turn.held)) return s
+        return {
+          ...s,
+          turn: {
+            ...s.turn,
+            held: held.slice(0, 5).map((v) => !!v)
+          }
+        }
+      })
+      return
+    }
+    if (action === 'SET_HOLD') {
+      const index = payload && typeof payload.index === 'number' ? payload.index : -1
+      if (index < 0 || index > 4) return
+      const targetHeld = !!(payload && payload.held)
+      this.bumpExpectedVersionMin()
+      this.applyOptimisticOnlineState((s) => {
+        if (!s || !s.turn || !Array.isArray(s.turn.held)) return s
+        const nextHeld = s.turn.held.slice()
+        nextHeld[index] = targetHeld
+        return {
+          ...s,
+          turn: {
+            ...s.turn,
+            held: nextHeld
+          }
+        }
+      })
+      return
+    }
+
     if (action === 'TOGGLE_HOLD_BATCH') {
       const indices = payload && Array.isArray(payload.indices) ? payload.indices : null
       if (!indices) return
@@ -1806,13 +1902,12 @@ export default class Main {
         const last = typeof rt.lastHoldTapAt === 'number' ? rt.lastHoldTapAt : 0
         if (now - last < 30) return
         rt.lastHoldTapAt = now
-        if (!Array.isArray(rt.pendingHoldParity) || rt.pendingHoldParity.length < 5) {
-          rt.pendingHoldParity = [0, 0, 0, 0, 0]
-        }
-        rt.pendingHoldParity[diceIndex] = (rt.pendingHoldParity[diceIndex] || 0) + 1
       }
       this.bumpExpectedVersionMin()
       this.applyOptimisticOnlineState((s) => actionToggleHold(s, diceIndex))
+      if (rt && this.state && this.state.turn && Array.isArray(this.state.turn.held)) {
+        rt.pendingHoldState = this.state.turn.held.slice(0, 5).map((v) => !!v)
+      }
       this.scheduleFlushHoldToggles(rid)
       return
     }
