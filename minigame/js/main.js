@@ -385,6 +385,10 @@ export default class Main {
           const patch = msg && msg.patch && typeof msg.patch === 'object' ? msg.patch : null
           const action = msg && typeof msg.action === 'string' ? msg.action : ''
           const actorSeatIndex = msg && typeof msg.actorSeatIndex === 'number' ? msg.actorSeatIndex : -1
+          if (action === 'removed') {
+            this.handleRoomDismissed()
+            return
+          }
           if (this.realtime) {
             if (incomingVersion > 0) {
               const currentVersion =
@@ -546,6 +550,30 @@ export default class Main {
     return true
   }
 
+  handleRoomDismissed() {
+    if (!this.ui || !this.ui.lobby) return
+    const lobby = this.ui.lobby
+    lobby.room = null
+    lobby.self = null
+    lobby.error = '房间已解散'
+    lobby.dismissed = true
+    this.stopRoomRealtime()
+    if (wx && typeof wx.showModal === 'function') {
+      wx.showModal({
+        title: '联机对战',
+        content: '房间已解散',
+        confirmText: '返回',
+        showCancel: false,
+        success: (res) => {
+          if (res && res.confirm) this.lobbyExit()
+        }
+      })
+      return
+    }
+    this.showBlockingError('房间已解散')
+    this.lobbyExit()
+  }
+
   applyRoomStateResult(roomId, result) {
     const rid = this.normalizeRoomId(roomId)
     if (!rid) return
@@ -556,25 +584,7 @@ export default class Main {
     if (result && result.ok === false) {
       const code = result.code || ''
       if (code === 'ROOM_NOT_FOUND') {
-        lobby.room = null
-        lobby.self = null
-        lobby.error = '房间已解散'
-        lobby.dismissed = true
-        this.stopRoomRealtime()
-        if (wx && typeof wx.showModal === 'function') {
-          wx.showModal({
-            title: '联机对战',
-            content: '房间已解散',
-            confirmText: '返回',
-            showCancel: false,
-            success: (res) => {
-              if (res && res.confirm) this.lobbyExit()
-            }
-          })
-        } else {
-          this.showBlockingError('房间已解散')
-          this.lobbyExit()
-        }
+        this.handleRoomDismissed()
         return
       }
       if (this.screen === 'lobby') {
@@ -1221,15 +1231,12 @@ export default class Main {
     if (lobby.pollInFlight) return
     const rt = this.realtime
     const wsConnected = !!(rt && rt.connected && this.normalizeRoomId(rt.roomId) === roomId)
-    const pendingVersion = rt && typeof rt.pendingVersion === 'number' ? rt.pendingVersion : 0
-    const appliedVersion = rt && typeof rt.lastAppliedVersion === 'number' ? rt.lastAppliedVersion : 0
     const myTurn = this.isOnlineMyTurn()
     const base = lobby.pollEnabled ? (myTurn ? 1200 : 900) : (wsConnected ? (myTurn ? 6000 : 5000) : 900)
     const backoff = typeof lobby.pollBackoffMs === 'number' ? lobby.pollBackoffMs : 0
     const interval = Math.max(base, backoff)
     const wsConnecting = !!(rt && rt.connecting && this.normalizeRoomId(rt.roomId) === roomId)
     if (!lobby.pollEnabled && wsConnected === false && !wsConnecting) lobby.pollEnabled = true
-    if (!lobby.pollEnabled && wsConnected && pendingVersion <= appliedVersion) return
     if (now - (lobby.lastPollAt || 0) < interval) return
 
     lobby.lastPollAt = now
